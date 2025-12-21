@@ -65,7 +65,7 @@ npm install -g serve
 Clone the repository:
 code
 Bash
-git clone https://github.com/your-username/flyvpn.git 
+git clone https://github.com/AFKMoney/flyvpn.git 
 cd flyvpn
 
 Start the local server:
