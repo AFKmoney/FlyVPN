@@ -1,0 +1,7 @@
+{
+  "name": "FLYVPN",
+  "description": "A premium next-generation VPN interface offering absolute confidentiality, advanced security, and borderless network access.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
