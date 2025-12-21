@@ -1,8 +1,5 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
-
 FlyVPN - Next-Generation Privacy Infrastructure
+
 A premium, industrial-grade VPN interface offering absolute confidentiality, advanced security, and borderless network access through a sleek, futuristic UI.
 FlyÈVPN is a sophisticated front-end application that simulates a next-generation VPN client. It's built with React and TypeScript, showcasing a highly interactive and visually rich user experience. This project demonstrates advanced state management, dynamic component rendering, and a deep integration of complex security and networking concepts into an intuitive interface.
 (Image: The main dashboard, showing a secure connection, real-time traffic analysis, and quick access controls.)
