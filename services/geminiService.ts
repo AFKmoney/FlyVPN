@@ -15,8 +15,16 @@ export const switchServer = (server: Server): Promise<Server> => {
 };
 
 // --- IP Service ---
-export const getRealIP = (): Promise<string> => {
-    return new Promise(resolve => setTimeout(() => resolve('203.0.113.42'), 1500));
+export const getRealIP = async (): Promise<string> => {
+    try {
+        const response = await fetch('https://api.ipify.org?format=json');
+        if (!response.ok) throw new Error('Network response was not ok');
+        const data = await response.json();
+        return data.ip;
+    } catch (error) {
+        console.warn("Failed to fetch real IP, falling back to simulation.", error);
+        return new Promise(resolve => setTimeout(() => resolve('203.0.113.42'), 1500));
+    }
 }
 
 // --- Progression Service ---
