@@ -110,12 +110,17 @@ const calculateWavelength = (freqVal: number, unit: string) => {
 }
 
 // Audio System
+let sharedAudioCtx: AudioContext | null = null;
+
 const playAlertSound = (type: 'CYBER' | 'RF' | 'LOCK') => {
     try {
-        const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
-        if (!AudioContext) return;
-        
-        const ctx = new AudioContext();
+        let ctx = sharedAudioCtx;
+        if (!ctx) {
+            const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+            if (!AudioContext) return;
+            ctx = new AudioContext();
+            sharedAudioCtx = ctx;
+        }
         const oscillator = ctx.createOscillator();
         const gainNode = ctx.createGain();
 
@@ -345,9 +350,9 @@ const ThreatDossier = ({ threat, onClose }: { threat: Threat, onClose: () => voi
                 <div className="animate-in fade-in slide-in-from-bottom-2 duration-500 mt-4">
                     <div className="text-slate-500 font-bold uppercase text-[10px] mb-1">Countermeasure Payload</div>
                     <div className={`font-mono text-xs p-3 rounded border bg-slate-950 shadow-inner ${threat.category === 'RF' ? 'border-purple-500/20 text-purple-300' : 'border-cyan-500/20 text-cyan-300'}`}>
-                        <div className="opacity-50 text-[9px] mb-1">>> TRANSMITTING ERROR PACKET...</div>
+                        <div className="opacity-50 text-[9px] mb-1">{">>"} TRANSMITTING ERROR PACKET...</div>
                         <div className="font-bold">{`> ${threat.counterMeasure}`}</div>
-                        <div className="text-emerald-500 mt-1">>> SENT OK</div>
+                        <div className="text-emerald-500 mt-1">{">>"} SENT OK</div>
                     </div>
                     <p className="text-[9px] text-slate-500 mt-2 italic">
                         * Real data protected. Error message sent to attacker.
