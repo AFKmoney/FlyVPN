@@ -33,7 +33,10 @@ const App: React.FC = () => {
     if (config.adaptiveRouting && status === ConnectionStatus.CONNECTED) {
       intervalId = window.setInterval(() => {
         // This logic could also be in a service, but is fine here for now
-        const fastestServer = [...SERVERS].sort((a, b) => (a.latency ?? Infinity) - (b.latency ?? Infinity))[0];
+        const fastestServer = SERVERS.length > 0 ? SERVERS.reduce((prev, curr) =>
+          (curr.latency ?? Infinity) < (prev.latency ?? Infinity) ? curr : prev
+        ) : undefined;
+
         if (fastestServer && fastestServer.id !== currentServer.id) {
             selectServer(fastestServer, true);
         }
