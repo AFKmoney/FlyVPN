@@ -161,6 +161,7 @@ const IntelCenterPanel: React.FC<{setActiveIntelView: (view: IntelView) => void}
         { id: 'threatMap', labelKey: 'threatMapLabel', descKey: 'threatMapDescription' },
         { id: 'packetVisualizer', labelKey: 'packetVisualizerLabel', descKey: 'packetVisualizerDescription' },
         { id: 'logManager', labelKey: 'logManagerLabel', descKey: 'logManagerDescription' },
+        { id: 'blankSlate', labelKey: 'blankSlateLabel', descKey: 'blankSlateDescription' },
         { id: 'warrantCanary', labelKey: 'warrantCanaryLabel', descKey: 'warrantCanaryDescription' },
     ];
 
