@@ -500,6 +500,10 @@ export const RealtimeThreatMap: React.FC<RealtimeThreatMapProps> = ({onClose, on
         return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
     }, []);
 
+    const activeThreats = useMemo(() => {
+        return threats.filter(t => t.status !== 'neutralized');
+    }, [threats]);
+
     const chartData = useMemo(() => {
         // Merge stats
         const allStats = {...threatStats};
@@ -552,7 +556,7 @@ export const RealtimeThreatMap: React.FC<RealtimeThreatMapProps> = ({onClose, on
                                 </CircleMarker>
                             </>
                         )}
-                        {threats.filter(t => t.status !== 'neutralized').map(threat => (
+                        {activeThreats.map(threat => (
                              threat.category === 'RF' ? (
                                 <Marker 
                                     key={threat.id} 
