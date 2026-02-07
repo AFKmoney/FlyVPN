@@ -29,12 +29,12 @@ export const loadProgression = (): { level: number, xp: number, stats: UserStats
         return {
             level: savedLevel ? JSON.parse(savedLevel) : 1,
             xp: savedXp ? JSON.parse(savedXp) : 0,
-            stats: savedStats ? JSON.parse(savedStats) : { totalNeutralized: 0, malware: 0, phishing: 0, ddos: 0, spyware: 0, adware: 0, level: 1 },
+            stats: savedStats ? JSON.parse(savedStats) : { totalNeutralized: 0, malware: 0, phishing: 0, ddos: 0, spyware: 0, adware: 0, level: 1, neutralizationHistory: [] },
             badges: savedBadges ? JSON.parse(savedBadges) : [],
         };
     } catch (e) {
         console.error("Failed to load progression data", e);
-        return { level: 1, xp: 0, stats: { totalNeutralized: 0, malware: 0, phishing: 0, ddos: 0, spyware: 0, adware: 0, level: 1 }, badges: [] };
+        return { level: 1, xp: 0, stats: { totalNeutralized: 0, malware: 0, phishing: 0, ddos: 0, spyware: 0, adware: 0, level: 1, neutralizationHistory: [] }, badges: [] };
     }
 };
 
