@@ -13,6 +13,7 @@ import { PacketFlowVisualizer } from './components/intel/PacketFlowVisualizer';
 import { ConnectionLogManager } from './components/intel/ConnectionLogManager';
 import { ProfileView } from './components/ProfileView';
 import { Toast, ToastData } from './components/ui/Toast';
+import { findFastestServer } from './lib/serverUtils';
 
 type View = 'dashboard' | 'servers' | 'settings' | 'devices';
 export type IntelView = 'threatMap' | 'packetVisualizer' | 'logManager' | 'warrantCanary';
@@ -32,8 +33,8 @@ const App: React.FC = () => {
     let intervalId: number | undefined;
     if (config.adaptiveRouting && status === ConnectionStatus.CONNECTED) {
       intervalId = window.setInterval(() => {
-        // This logic could also be in a service, but is fine here for now
-        const fastestServer = [...SERVERS].sort((a, b) => (a.latency ?? Infinity) - (b.latency ?? Infinity))[0];
+        // optimized server selection (O(N) instead of O(N log N))
+        const fastestServer = findFastestServer(SERVERS);
         if (fastestServer && fastestServer.id !== currentServer.id) {
             selectServer(fastestServer, true);
         }
