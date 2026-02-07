@@ -119,7 +119,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // Progression State
     const [level, setLevel] = useState(1);
     const [xp, setXp] = useState(0);
-    const [userStats, setUserStats] = useState<UserStats>({ totalNeutralized: 0, malware: 0, phishing: 0, ddos: 0, spyware: 0, adware: 0, level: 1 });
+    const [userStats, setUserStats] = useState<UserStats>({ totalNeutralized: 0, malware: 0, phishing: 0, ddos: 0, spyware: 0, adware: 0, level: 1, neutralizationHistory: [] });
     const [unlockedBadgeIds, setUnlockedBadgeIds] = useState<string[]>([]);
     const xpForNextLevel = level * 100;
 
@@ -223,7 +223,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setXpGains(prev => [...prev, { id: gainId, amount: 10 }]);
         setTimeout(() => setXpGains(prev => prev.filter(g => g.id !== gainId)), 1000);
 
-        const newStats: UserStats = { ...userStats, level: newLevel, totalNeutralized: userStats.totalNeutralized + 1, [threatType.toLowerCase()]: (userStats[threatType.toLowerCase()] || 0) + 1 };
+        const now = Date.now();
+        const history = (userStats.neutralizationHistory || []).filter(t => now - t < 15000);
+        history.push(now);
+
+        const newStats: UserStats = {
+            ...userStats,
+            level: newLevel,
+            totalNeutralized: userStats.totalNeutralized + 1,
+            [threatType.toLowerCase()]: ((userStats[threatType.toLowerCase()] as number) || 0) + 1,
+            neutralizationHistory: history
+        };
         
         setLevel(newLevel);
         setXp(newXp);
