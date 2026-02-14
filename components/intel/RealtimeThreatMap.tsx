@@ -511,6 +511,8 @@ export const RealtimeThreatMap: React.FC<RealtimeThreatMapProps> = ({onClose, on
             .slice(0, 10);
     }, [threatStats]);
 
+    const activeThreats = useMemo(() => threats.filter(t => t.status !== 'neutralized'), [threats]);
+
     const statusDisplay: Record<ThreatStatus, React.ReactElement> = { 
         detecting: <span className="text-amber-400">DETECTING</span>, 
         locking: <span className="text-rose-400 animate-pulse">LOCKING</span>,
@@ -552,7 +554,7 @@ export const RealtimeThreatMap: React.FC<RealtimeThreatMapProps> = ({onClose, on
                                 </CircleMarker>
                             </>
                         )}
-                        {threats.filter(t => t.status !== 'neutralized').map(threat => (
+                        {activeThreats.map(threat => (
                              threat.category === 'RF' ? (
                                 <Marker 
                                     key={threat.id} 
