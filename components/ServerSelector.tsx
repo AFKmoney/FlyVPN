@@ -6,6 +6,24 @@ import { useLocalization, useAppContext } from '../contexts/LocalizationContext'
 type FilterType = 'all' | 'optimized';
 type SortType = 'latency' | 'country' | 'city';
 
+interface SortButtonProps {
+  sortType: SortType;
+  currentSort: SortType;
+  onSortChange: (type: SortType) => void;
+  children: React.ReactNode;
+}
+
+const SortButton: React.FC<SortButtonProps> = ({ sortType, currentSort, onSortChange, children }) => (
+  <button
+    onClick={() => onSortChange(sortType)}
+    className={`px-3 py-1 text-[10px] font-bold uppercase rounded-md transition-colors ${
+      currentSort === sortType ? 'bg-slate-700 text-white' : 'bg-transparent text-slate-400 hover:bg-slate-800'
+    }`}
+  >
+    {children}
+  </button>
+);
+
 export const ServerSelector: React.FC = () => {
   const { currentServer, selectServer } = useAppContext();
   const [search, setSearch] = useState('');
@@ -37,17 +55,6 @@ export const ServerSelector: React.FC = () => {
     return isDot ? 'bg-rose-500' : 'bg-gradient-to-r from-rose-500 to-red-400';
   };
 
-  const SortButton: React.FC<{ sortType: SortType; children: React.ReactNode }> = ({ sortType, children }) => (
-    <button
-      onClick={() => setSortBy(sortType)}
-      className={`px-3 py-1 text-[10px] font-bold uppercase rounded-md transition-colors ${
-        sortBy === sortType ? 'bg-slate-700 text-white' : 'bg-transparent text-slate-400 hover:bg-slate-800'
-      }`}
-    >
-      {children}
-    </button>
-  );
-
   return (
     <div className="glass rounded-3xl p-6 flex flex-col h-full max-h-[calc(100vh-10rem)]">
       <div className="flex items-center justify-between mb-2">
@@ -75,8 +82,8 @@ export const ServerSelector: React.FC = () => {
           </svg>
         </div>
         <div className="flex items-center gap-1 glass rounded-lg p-1 ml-2">
-            <SortButton sortType="latency">Latency</SortButton>
-            <SortButton sortType="country">Country</SortButton>
+            <SortButton sortType="latency" currentSort={sortBy} onSortChange={setSortBy}>Latency</SortButton>
+            <SortButton sortType="country" currentSort={sortBy} onSortChange={setSortBy}>Country</SortButton>
         </div>
       </div>
 
