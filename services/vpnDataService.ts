@@ -1,5 +1,5 @@
 import { Server } from '../types';
-import { countryToFlag } from '../lib/utils';
+import { countryToFlag, getFlagEmoji } from '../lib/utils';
 
 // --- OpenGate (Public VPN) Data Fetcher ---
 const fetchOpenGateServers = async (): Promise<Server[]> => {
@@ -16,6 +16,7 @@ const fetchOpenGateServers = async (): Promise<Server[]> => {
         // Find column indices dynamically
         const ipIndex = header.indexOf('IP');
         const countryLongIndex = header.indexOf('CountryLong');
+        const countryShortIndex = header.indexOf('CountryShort');
         const speedIndex = header.indexOf('Speed');
         const pingIndex = header.indexOf('Ping');
         const numVpnSessionsIndex = header.indexOf('#VPN-Sessions');
@@ -25,6 +26,7 @@ const fetchOpenGateServers = async (): Promise<Server[]> => {
             if (values.length > 1) {
                 const ip = values[ipIndex];
                 const country = values[countryLongIndex];
+                const countryCode = countryShortIndex !== -1 ? values[countryShortIndex] : undefined;
                 const speed = parseInt(values[speedIndex], 10); // in bps
                 const latency = pingIndex !== -1 ? parseInt(values[pingIndex], 10) : null;
                 const sessions = numVpnSessionsIndex !== -1 ? parseInt(values[numVpnSessionsIndex], 10) : 0;
@@ -40,7 +42,7 @@ const fetchOpenGateServers = async (): Promise<Server[]> => {
                         city: country, // OpenGate doesn't provide city-level data
                         latency,
                         load: isNaN(load) ? 50 : load,
-                        flag: countryToFlag(country),
+                        flag: countryCode ? getFlagEmoji(countryCode) : countryToFlag(country),
                         type: 'opengate',
                     });
                 }
@@ -67,7 +69,7 @@ const fetchTorExitNodes = async (): Promise<Server[]> => {
             city: relay.nickname, // Use nickname for city as it's more descriptive
             latency: null, // Tor doesn't provide latency directly
             load: Math.round((relay.consensus_weight / 10000) * 100), // Approximate load
-            flag: countryToFlag(relay.country_name),
+            flag: relay.country ? getFlagEmoji(relay.country) : countryToFlag(relay.country_name),
             type: 'tor',
         }));
         return servers;
