@@ -223,7 +223,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setXpGains(prev => [...prev, { id: gainId, amount: 10 }]);
         setTimeout(() => setXpGains(prev => prev.filter(g => g.id !== gainId)), 1000);
 
-        const newStats: UserStats = { ...userStats, level: newLevel, totalNeutralized: userStats.totalNeutralized + 1, [threatType.toLowerCase()]: (userStats[threatType.toLowerCase()] || 0) + 1 };
+        const now = Date.now();
+        const historyWindow = 15000;
+        const currentHistory = userStats.neutralizationHistory || [];
+        const newHistory = [...currentHistory, now].filter(t => now - t <= historyWindow);
+        const newStats: UserStats = {
+            ...userStats,
+            level: newLevel,
+            totalNeutralized: userStats.totalNeutralized + 1,
+            [threatType.toLowerCase()]: ((userStats[threatType.toLowerCase()] as number) || 0) + 1,
+            neutralizationHistory: newHistory
+        };
         
         setLevel(newLevel);
         setXp(newXp);
