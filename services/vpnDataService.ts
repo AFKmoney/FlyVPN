@@ -9,9 +9,20 @@ const fetchOpenGateServers = async (): Promise<Server[]> => {
         if (!response.ok) throw new Error('Failed to fetch OpenGate server list');
         
         const textData = await response.text();
-        const lines = textData.split('\n');
+        // Optimization: parse text directly without splitting into lines or values arrays
+        // This reduces memory allocation significantly for large datasets
         const servers: Server[] = [];
-        const header = lines[1].split(',');
+
+        let lineStart = 0;
+        let lineEnd = textData.indexOf('\n', lineStart); // Skip comment line
+        if (lineEnd === -1) return [];
+
+        lineStart = lineEnd + 1;
+        lineEnd = textData.indexOf('\n', lineStart); // Header line
+        if (lineEnd === -1) return [];
+
+        const headerLine = textData.substring(lineStart, lineEnd);
+        const header = headerLine.split(',');
 
         // Find column indices dynamically
         const ipIndex = header.indexOf('IP');
@@ -19,19 +30,46 @@ const fetchOpenGateServers = async (): Promise<Server[]> => {
         const speedIndex = header.indexOf('Speed');
         const pingIndex = header.indexOf('Ping');
         const numVpnSessionsIndex = header.indexOf('#VPN-Sessions');
-        
-        for (let i = 2; i < lines.length; i++) {
-            const values = lines[i].split(',');
-            if (values.length > 1) {
-                const ip = values[ipIndex];
-                const country = values[countryLongIndex];
-                const speed = parseInt(values[speedIndex], 10); // in bps
-                const latency = pingIndex !== -1 ? parseInt(values[pingIndex], 10) : null;
-                const sessions = numVpnSessionsIndex !== -1 ? parseInt(values[numVpnSessionsIndex], 10) : 0;
-                
+
+        const maxIndex = Math.max(ipIndex, countryLongIndex, speedIndex, pingIndex, numVpnSessionsIndex);
+
+        lineStart = lineEnd + 1;
+        const len = textData.length;
+
+        while (lineStart < len) {
+            lineEnd = textData.indexOf('\n', lineStart);
+            if (lineEnd === -1) lineEnd = len;
+
+            if (lineEnd > lineStart) {
+                let pos = lineStart;
+                let colIndex = 0;
+
+                let ip: string | undefined;
+                let country: string | undefined;
+                let speed = 0;
+                let latency: number | null = null;
+                let sessions = 0;
+
+                while (colIndex <= maxIndex && pos <= lineEnd) {
+                    let nextComma = textData.indexOf(',', pos);
+                    if (nextComma === -1 || nextComma > lineEnd) {
+                        nextComma = lineEnd;
+                    }
+
+                    if (colIndex === ipIndex) ip = textData.substring(pos, nextComma);
+                    else if (colIndex === countryLongIndex) country = textData.substring(pos, nextComma);
+                    else if (colIndex === speedIndex) speed = parseInt(textData.substring(pos, nextComma), 10);
+                    else if (colIndex === pingIndex) latency = parseInt(textData.substring(pos, nextComma), 10);
+                    else if (colIndex === numVpnSessionsIndex) sessions = parseInt(textData.substring(pos, nextComma), 10);
+
+                    pos = nextComma + 1;
+                    colIndex++;
+                    if (nextComma === lineEnd) break;
+                }
+
                 // Simple load calculation based on sessions and speed
                 const load = Math.min(99, Math.round((sessions / (speed / 1000000)) * 2));
-                
+
                 if (ip && country) {
                      servers.push({
                         id: `og-${ip}`,
@@ -45,6 +83,7 @@ const fetchOpenGateServers = async (): Promise<Server[]> => {
                     });
                 }
             }
+            lineStart = lineEnd + 1;
         }
         return servers;
     } catch (error) {
