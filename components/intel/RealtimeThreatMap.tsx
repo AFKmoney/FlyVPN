@@ -110,12 +110,23 @@ const calculateWavelength = (freqVal: number, unit: string) => {
 }
 
 // Audio System
+let audioContextInstance: AudioContext | null = null;
+
 const playAlertSound = (type: 'CYBER' | 'RF' | 'LOCK') => {
     try {
         const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
         if (!AudioContext) return;
         
-        const ctx = new AudioContext();
+        if (!audioContextInstance) {
+            audioContextInstance = new AudioContext();
+        }
+
+        const ctx = audioContextInstance;
+
+        if (ctx.state === 'suspended') {
+            ctx.resume();
+        }
+
         const oscillator = ctx.createOscillator();
         const gainNode = ctx.createGain();
 
