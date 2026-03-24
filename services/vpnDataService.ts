@@ -80,10 +80,51 @@ const fetchTorExitNodes = async (): Promise<Server[]> => {
 };
 
 // --- Main Export ---
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+
+interface PublicNodesCache {
+    data: { opengate: Server[], tor: Server[] } | null;
+    timestamp: number;
+}
+
+let cache: PublicNodesCache = {
+    data: null,
+    timestamp: 0
+};
+
+let pendingPromise: Promise<{ opengate: Server[], tor: Server[] }> | null = null;
+
 export const fetchPublicNodes = async (): Promise<{ opengate: Server[], tor: Server[] }> => {
-    const [opengate, tor] = await Promise.all([
-        fetchOpenGateServers(),
-        fetchTorExitNodes()
-    ]);
-    return { opengate, tor };
+    const now = Date.now();
+
+    // Return cached data if valid
+    if (cache.data && (now - cache.timestamp < CACHE_DURATION)) {
+        return cache.data;
+    }
+
+    // Return pending promise if a fetch is already in progress
+    if (pendingPromise) {
+        return pendingPromise;
+    }
+
+    // Initiate new fetch
+    pendingPromise = (async () => {
+        try {
+            const [opengate, tor] = await Promise.all([
+                fetchOpenGateServers(),
+                fetchTorExitNodes()
+            ]);
+            const data = { opengate, tor };
+
+            cache = {
+                data,
+                timestamp: Date.now()
+            };
+            return data;
+        } finally {
+            pendingPromise = null;
+        }
+    })();
+
+    return pendingPromise;
 };
