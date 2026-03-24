@@ -148,7 +148,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         );
     }, [config.logManagerEnabled]);
     
-    const updateConfig = (key: keyof VPNConfig, value: any) => {
+    const updateConfig = useCallback((key: keyof VPNConfig, value: any) => {
         setConfig(prevConfig => {
             let newConfig = { ...prevConfig, [key]: value };
             
@@ -167,7 +167,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             }
             return newConfig;
         });
-    };
+    }, []);
 
     const toggleConnection = useCallback(async () => {
         if (status === ConnectionStatus.DISCONNECTED) {
@@ -243,17 +243,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         progressionService.saveProgression({ level: newLevel, xp: newXp, stats: newStats });
     }, [xp, level, userStats, xpForNextLevel, checkBadgeUnlocks]);
 
-    const clearLogs = () => {
+    const clearLogs = useCallback(() => {
         setLogs([]);
         logService.clearLogs();
-    };
+    }, []);
 
-    const value = {
+    const showProfile = useCallback(() => setProfileVisible(true), []);
+    const hideProfile = useCallback(() => setProfileVisible(false), []);
+
+    const value = useMemo(() => ({
         status, user, config, currentServer, logs, level, xp, xpForNextLevel, userStats, unlockedBadgeIds, xpGains, activeIntelView, isProfileVisible,
         toggleConnection, selectServer, updateConfig, neutralizeThreat, clearLogs, setActiveIntelView,
-        showProfile: () => setProfileVisible(true),
-        hideProfile: () => setProfileVisible(false),
-    };
+        showProfile,
+        hideProfile,
+    }), [
+        status, user, config, currentServer, logs, level, xp, xpForNextLevel, userStats, unlockedBadgeIds, xpGains, activeIntelView, isProfileVisible,
+        toggleConnection, selectServer, updateConfig, neutralizeThreat, clearLogs, setActiveIntelView, showProfile, hideProfile
+    ]);
 
     return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 };
