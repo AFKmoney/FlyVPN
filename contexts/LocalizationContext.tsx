@@ -37,7 +37,7 @@ export const LocalizationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     }, {} as Record<LanguageCode, { name: string }>);
   }, []);
 
-  const t = (key: string, replacements?: Record<string, string>): any => {
+  const t = useCallback((key: string, replacements?: Record<string, string>): any => {
     const langDict = translations[language] || translations.en;
     let text = langDict[key as keyof typeof langDict] || translations.en[key as keyof typeof translations.en] || key;
     if (typeof text === 'object') return text;
@@ -47,17 +47,17 @@ export const LocalizationProvider: React.FC<{ children: React.ReactNode }> = ({ 
       });
     }
     return text;
-  };
+  }, [language]);
 
-  const setLanguage = (lang: string) => {
+  const setLanguage = useCallback((lang: string) => {
     if (Object.keys(translations).includes(lang)) {
         const langCode = lang as LanguageCode;
         try { localStorage.setItem('flyvpn_language', langCode); } catch (e) { console.error("Could not save language to localStorage", e); }
         _setLanguage(langCode);
     }
-  };
+  }, []);
 
-  const value = { language, setLanguage, t, supportedLanguages };
+  const value = useMemo(() => ({ language, setLanguage, t, supportedLanguages }), [language, setLanguage, t, supportedLanguages]);
   return <LocalizationContext.Provider value={value}>{children}</LocalizationContext.Provider>;
 };
 
