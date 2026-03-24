@@ -6,6 +6,7 @@ import { ControlPanel } from './components/ControlPanel';
 import { DeviceManager } from './components/DeviceManager';
 import { ConnectionStatus } from './types';
 import { SERVERS } from './constants';
+import { findFastestServer } from './services/routingService';
 import { useLocalization } from './contexts/LocalizationContext';
 import { useAppContext } from './contexts/LocalizationContext';
 import { RealtimeThreatMap } from './components/intel/RealtimeThreatMap';
@@ -33,8 +34,7 @@ const App: React.FC = () => {
     let intervalId: number | undefined;
     if (config.adaptiveRouting && status === ConnectionStatus.CONNECTED) {
       intervalId = window.setInterval(() => {
-        // This logic could also be in a service, but is fine here for now
-        const fastestServer = [...SERVERS].sort((a, b) => (a.latency ?? Infinity) - (b.latency ?? Infinity))[0];
+        const fastestServer = findFastestServer(SERVERS);
         if (fastestServer && fastestServer.id !== currentServer.id) {
             selectServer(fastestServer, true);
         }
