@@ -62,15 +62,41 @@ export const loadLogs = (): LogEntry[] => {
     }
 };
 
-export const saveLogs = (logs: LogEntry[]) => {
+let saveLogsTimeout: ReturnType<typeof setTimeout> | null = null;
+let pendingLogs: LogEntry[] | null = null;
+
+const persistLogs = () => {
+    if (!pendingLogs) return;
     try {
-        localStorage.setItem('flyvpn_connection_logs', JSON.stringify(logs));
+        localStorage.setItem('flyvpn_connection_logs', JSON.stringify(pendingLogs));
+        pendingLogs = null;
     } catch (e) {
         console.error("Failed to save logs to localStorage", e);
+    }
+    saveLogsTimeout = null;
+};
+
+export const saveLogs = (logs: LogEntry[]) => {
+    pendingLogs = logs;
+    if (saveLogsTimeout) {
+        clearTimeout(saveLogsTimeout);
+    }
+    saveLogsTimeout = setTimeout(persistLogs, 2000);
+};
+
+export const flushLogs = () => {
+    if (saveLogsTimeout) {
+        clearTimeout(saveLogsTimeout);
+        persistLogs();
     }
 };
 
 export const clearLogs = () => {
+    if (saveLogsTimeout) {
+        clearTimeout(saveLogsTimeout);
+        saveLogsTimeout = null;
+    }
+    pendingLogs = null;
     try {
         localStorage.removeItem('flyvpn_connection_logs');
     } catch (e) {
