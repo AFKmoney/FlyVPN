@@ -356,9 +356,9 @@ const ThreatDossier = ({ threat, onClose }: { threat: Threat, onClose: () => voi
                 <div className="animate-in fade-in slide-in-from-bottom-2 duration-500 mt-4">
                     <div className="text-slate-500 font-bold uppercase text-[10px] mb-1">Countermeasure Payload</div>
                     <div className={`font-mono text-xs p-3 rounded border bg-slate-950 shadow-inner ${threat.category === 'RF' ? 'border-purple-500/20 text-purple-300' : 'border-cyan-500/20 text-cyan-300'}`}>
-                        <div className="opacity-50 text-[9px] mb-1">&gt;&gt; TRANSMITTING ERROR PACKET...</div>
+                        <div className="opacity-50 text-[9px] mb-1">{`>>`} TRANSMITTING ERROR PACKET...</div>
                         <div className="font-bold">{`> ${threat.counterMeasure}`}</div>
-                        <div className="text-emerald-500 mt-1">&gt;&gt; SENT OK</div>
+                        <div className="text-emerald-500 mt-1">{`>>`} SENT OK</div>
                     </div>
                     <p className="text-[9px] text-slate-500 mt-2 italic">
                         * Real data protected. Error message sent to attacker.
@@ -534,6 +534,8 @@ export const RealtimeThreatMap: React.FC<RealtimeThreatMapProps> = ({onClose, on
         neutralizing: <span className="text-cyan-400 animate-pulse">JAMMING</span>, 
         neutralized: <span className="text-slate-500">NEUTRALIZED</span> 
     };
+
+    const activeThreats = useMemo(() => threats.filter(t => t.status !== 'neutralized'), [threats]);
 
     return (
         <div ref={modalRef} className="fixed inset-0 bg-slate-900/95 backdrop-blur-md flex flex-col z-50 animate-in fade-in duration-300 overflow-y-auto">
