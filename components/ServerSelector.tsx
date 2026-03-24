@@ -14,14 +14,15 @@ export const ServerSelector: React.FC = () => {
   const { t } = useLocalization();
 
   const processedServers = useMemo(() => {
+    const searchLower = search.toLowerCase();
     return SERVERS
       .filter(s => {
         if (filter === 'optimized') return s.tier === 'optimized';
         return true;
       })
       .filter(s => 
-        t(s.country).toLowerCase().includes(search.toLowerCase()) || 
-        s.city.toLowerCase().includes(search.toLowerCase())
+        t(s.country).toLowerCase().includes(searchLower) ||
+        s.city.toLowerCase().includes(searchLower)
       )
       .sort((a, b) => {
         if (sortBy === 'latency') return a.latency - b.latency;
