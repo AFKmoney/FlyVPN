@@ -197,7 +197,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             addLog('Server Change', `Tunnel re-established via ${server.city} (${server.ip}).`);
         }
         if (!isAutomatic) updateConfig('adaptiveRouting', false);
-    }, [status, currentServer.id, addLog]);
+    }, [status, currentServer.id, addLog, updateConfig]);
 
     const checkBadgeUnlocks = useCallback((newStats: UserStats) => {
         setUnlockedBadgeIds(prevUnlockedIds => {
@@ -256,10 +256,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         toggleConnection, selectServer, updateConfig, neutralizeThreat, clearLogs, setActiveIntelView,
         showProfile,
         hideProfile,
-    }), [
-        status, user, config, currentServer, logs, level, xp, xpForNextLevel, userStats, unlockedBadgeIds, xpGains, activeIntelView, isProfileVisible,
-        toggleConnection, selectServer, updateConfig, neutralizeThreat, clearLogs, setActiveIntelView, showProfile, hideProfile
-    ]);
+    }), [status, user, config, currentServer, logs, level, xp, xpForNextLevel, userStats, unlockedBadgeIds, xpGains, activeIntelView, isProfileVisible, toggleConnection, selectServer, updateConfig, neutralizeThreat, clearLogs, showProfile, hideProfile]);
 
     return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 };
