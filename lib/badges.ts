@@ -42,7 +42,7 @@ export interface UserStats {
     spyware: number;
     adware: number;
     level: number;
-    neutralizationHistory: number[];
+    neutralizationHistory: number[]; // Array of timestamps
     [key: string]: number | number[];
 }
 
@@ -139,10 +139,9 @@ levelCounts.forEach((count, i) => {
 BADGES.push(
     createBadge('all5', 'Jack of All Trades', 'Neutralize 5 of each threat type.', 8, 3, s => s.malware >= 5 && s.phishing >= 5 && s.ddos >= 5 && s.spyware >= 5 && s.adware >= 5),
     createBadge('rapid_response', 'Rapid Response', 'Neutralize 3 threats in 10 seconds.', 4, 6, s => {
-        const history = s.neutralizationHistory || [];
-        if (history.length < 3) return false;
-        const recent = history.slice(-3);
-        return (recent[2] - recent[0]) <= 10000;
+        if (!s.neutralizationHistory || s.neutralizationHistory.length < 3) return false;
+        const history = s.neutralizationHistory;
+        return history[history.length - 1] - history[history.length - 3] <= 10000;
     }),
     createBadge('king', 'King of the Hill', 'Reach level 50 and neutralize 1000 threats.', 6, 4, s => s.level >= 50 && s.totalNeutralized >= 1000)
 );
