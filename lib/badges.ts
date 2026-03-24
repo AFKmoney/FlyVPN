@@ -42,8 +42,8 @@ export interface UserStats {
     spyware: number;
     adware: number;
     level: number;
-    neutralizationHistory?: number[];
-    [key: string]: number | number[] | undefined;
+    neutralizationHistory: number[];
+    [key: string]: number | number[];
 }
 
 const createBadge = (id: string, name: string, description: string, iconIndex: number, colorIndex: number, condition: (stats: UserStats) => boolean): Badge => ({
@@ -140,9 +140,10 @@ BADGES.push(
     createBadge('all5', 'Jack of All Trades', 'Neutralize 5 of each threat type.', 8, 3, s => s.malware >= 5 && s.phishing >= 5 && s.ddos >= 5 && s.spyware >= 5 && s.adware >= 5),
     createBadge('rapid_response', 'Rapid Response', 'Neutralize 3 threats in 10 seconds.', 4, 6, s => {
         if (!s.neutralizationHistory || s.neutralizationHistory.length < 3) return false;
-        const history = s.neutralizationHistory;
-        const count = history.length;
-        return (history[count - 1] - history[count - 3]) <= 10000;
+        // Check if the 3rd most recent threat was within 10 seconds of the most recent one
+        const latest = s.neutralizationHistory[s.neutralizationHistory.length - 1];
+        const thirdLatest = s.neutralizationHistory[s.neutralizationHistory.length - 3];
+        return (latest - thirdLatest) <= 10000;
     }),
     createBadge('king', 'King of the Hill', 'Reach level 50 and neutralize 1000 threats.', 6, 4, s => s.level >= 50 && s.totalNeutralized >= 1000)
 );
