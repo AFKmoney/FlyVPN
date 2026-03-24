@@ -93,6 +93,7 @@ export const Dashboard: React.FC = () => {
           <button
             onClick={toggleConnection}
             disabled={isConnecting}
+            aria-label={isConnected ? t('actionDisconnect') : t('actionConnect')}
             className={`w-28 h-28 sm:w-32 sm:h-32 rounded-full border-4 flex items-center justify-center transition-all duration-500 transform hover:scale-105 active:scale-95 z-10 relative ${
               isConnected 
                 ? 'border-cyan-500 bg-cyan-500/10 animate-pulse-fast' 
@@ -159,6 +160,7 @@ export const Dashboard: React.FC = () => {
             {/* Ghost Mode */}
             <button 
                 onClick={() => updateConfig('ghostMode', !config.ghostMode)}
+                aria-pressed={config.ghostMode}
                 className={`group relative overflow-hidden rounded-xl p-4 transition-all duration-300 border ${config.ghostMode ? 'bg-cyan-500/10 border-cyan-500/50' : 'bg-slate-900/50 border-white/5 hover:bg-white/5 hover:border-white/10'}`}
             >
                 <div className={`absolute top-0 right-0 p-2 opacity-50 transition-opacity ${config.ghostMode ? 'opacity-100' : 'group-hover:opacity-100'}`}>
@@ -176,6 +178,7 @@ export const Dashboard: React.FC = () => {
             {/* Kill Switch */}
             <button 
                 onClick={() => updateConfig('killSwitch', !config.killSwitch)}
+                aria-pressed={config.killSwitch}
                 className={`group relative overflow-hidden rounded-xl p-4 transition-all duration-300 border ${config.killSwitch ? 'bg-emerald-500/10 border-emerald-500/50' : 'bg-slate-900/50 border-white/5 hover:bg-white/5 hover:border-white/10'}`}
             >
                 <div className={`absolute top-0 right-0 p-2 opacity-50 transition-opacity ${config.killSwitch ? 'opacity-100' : 'group-hover:opacity-100'}`}>
@@ -193,6 +196,7 @@ export const Dashboard: React.FC = () => {
             {/* Ad Blocker */}
             <button 
                 onClick={() => updateConfig('adBlocker', !config.adBlocker)}
+                aria-pressed={config.adBlocker}
                 className={`group relative overflow-hidden rounded-xl p-4 transition-all duration-300 border ${config.adBlocker ? 'bg-rose-500/10 border-rose-500/50' : 'bg-slate-900/50 border-white/5 hover:bg-white/5 hover:border-white/10'}`}
             >
                 <div className={`absolute top-0 right-0 p-2 opacity-50 transition-opacity ${config.adBlocker ? 'opacity-100' : 'group-hover:opacity-100'}`}>
@@ -210,6 +214,7 @@ export const Dashboard: React.FC = () => {
             {/* Malware Shield */}
             <button 
                 onClick={() => updateConfig('malwareShield', !config.malwareShield)}
+                aria-pressed={config.malwareShield}
                 className={`group relative overflow-hidden rounded-xl p-4 transition-all duration-300 border ${config.malwareShield ? 'bg-orange-500/10 border-orange-500/50' : 'bg-slate-900/50 border-white/5 hover:bg-white/5 hover:border-white/10'}`}
             >
                 <div className={`absolute top-0 right-0 p-2 opacity-50 transition-opacity ${config.malwareShield ? 'opacity-100' : 'group-hover:opacity-100'}`}>
@@ -227,6 +232,7 @@ export const Dashboard: React.FC = () => {
             {/* Anti-DPI */}
             <button 
                 onClick={() => updateConfig('antiDPIEngine', !config.antiDPIEngine)}
+                aria-pressed={config.antiDPIEngine}
                 className={`group relative overflow-hidden rounded-xl p-4 transition-all duration-300 border ${config.antiDPIEngine ? 'bg-indigo-500/10 border-indigo-500/50' : 'bg-slate-900/50 border-white/5 hover:bg-white/5 hover:border-white/10'}`}
             >
                 <div className={`absolute top-0 right-0 p-2 opacity-50 transition-opacity ${config.antiDPIEngine ? 'opacity-100' : 'group-hover:opacity-100'}`}>
