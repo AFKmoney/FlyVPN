@@ -30,7 +30,7 @@ export const Dashboard: React.FC = () => {
   const isConnecting = status === ConnectionStatus.CONNECTING;
   
   const [messageIndex, setMessageIndex] = useState(0);
-  const [chartData, setChartData] = useState(generateInitialData());
+  const [chartData, setChartData] = useState(generateInitialData);
   const trafficRef = useRef({ down: 0, up: 0 });
 
   const cycleProtocol = () => {
