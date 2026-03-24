@@ -46,16 +46,48 @@ export const loadProgression = (): { level: number, xp: number, stats: UserStats
     }
 };
 
-export const saveProgression = (data: { level?: number, xp?: number, stats?: UserStats, badges?: string[] }) => {
+let pendingProgressionData: { level?: number, xp?: number, stats?: UserStats, badges?: string[] } = {};
+let saveProgressionTimeout: ReturnType<typeof setTimeout> | null = null;
+
+const performSave = () => {
     try {
-        if (data.level) localStorage.setItem('flyvpn_level', JSON.stringify(data.level));
-        if (data.xp) localStorage.setItem('flyvpn_xp', JSON.stringify(data.xp));
-        if (data.stats) localStorage.setItem('flyvpn_userStats', JSON.stringify(data.stats));
-        if (data.badges) localStorage.setItem('flyvpn_unlockedBadges', JSON.stringify(data.badges));
+        if (pendingProgressionData.level) localStorage.setItem('flyvpn_level', JSON.stringify(pendingProgressionData.level));
+        if (pendingProgressionData.xp) localStorage.setItem('flyvpn_xp', JSON.stringify(pendingProgressionData.xp));
+        if (pendingProgressionData.stats) localStorage.setItem('flyvpn_userStats', JSON.stringify(pendingProgressionData.stats));
+        if (pendingProgressionData.badges) localStorage.setItem('flyvpn_unlockedBadges', JSON.stringify(pendingProgressionData.badges));
+
+        pendingProgressionData = {};
+        saveProgressionTimeout = null;
     } catch (e) {
         console.error("Failed to save progression data", e);
     }
 };
+
+export const saveProgression = (data: { level?: number, xp?: number, stats?: UserStats, badges?: string[] }) => {
+    pendingProgressionData = { ...pendingProgressionData, ...data };
+
+    if (saveProgressionTimeout) {
+        clearTimeout(saveProgressionTimeout);
+    }
+
+    saveProgressionTimeout = setTimeout(performSave, 1000);
+};
+
+// Ensure data is saved before unload or when hidden
+if (typeof window !== 'undefined') {
+    window.addEventListener('beforeunload', () => {
+        if (saveProgressionTimeout) {
+            clearTimeout(saveProgressionTimeout);
+            performSave();
+        }
+    });
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden' && saveProgressionTimeout) {
+            clearTimeout(saveProgressionTimeout);
+            performSave();
+        }
+    });
+}
 
 
 // --- Log Service ---
