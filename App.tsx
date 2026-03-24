@@ -15,6 +15,7 @@ import { ConnectionLogManager } from './components/intel/ConnectionLogManager';
 import { BlankSlateAGI } from './components/intel/BlankSlateAGI';
 import { ProfileView } from './components/ProfileView';
 import { Toast, ToastData } from './components/ui/Toast';
+import { findFastestServer } from './lib/serverUtils';
 
 type View = 'dashboard' | 'servers' | 'settings' | 'devices';
 export type IntelView = 'threatMap' | 'packetVisualizer' | 'logManager' | 'warrantCanary' | 'blankSlate';
@@ -34,6 +35,7 @@ const App: React.FC = () => {
     let intervalId: number | undefined;
     if (config.adaptiveRouting && status === ConnectionStatus.CONNECTED) {
       intervalId = window.setInterval(() => {
+        // optimized server selection (O(N) instead of O(N log N))
         const fastestServer = findFastestServer(SERVERS);
         if (fastestServer && fastestServer.id !== currentServer.id) {
             selectServer(fastestServer, true);
