@@ -1,5 +1,5 @@
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import { BADGES, Badge } from '../lib/badges';
 import { useLocalization } from '../contexts/LocalizationContext';
 
@@ -26,6 +26,7 @@ const BadgeCard: React.FC<{ badge: Badge; isUnlocked: boolean }> = ({ badge, isU
 
 export const ProfileView: React.FC<ProfileViewProps> = ({ onClose, level, xp, xpForNextLevel, unlockedBadgeIds }) => {
     const { t } = useLocalization();
+    const unlockedBadgeSet = useMemo(() => new Set(unlockedBadgeIds), [unlockedBadgeIds]);
 
     return (
         <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-sm p-4 sm:p-8 flex flex-col z-50 animate-in fade-in duration-300" onClick={onClose}>
@@ -54,7 +55,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ onClose, level, xp, xp
                     <h3 className="font-bold text-slate-300 mb-4">Badge Collection ({unlockedBadgeIds.length} / {BADGES.length})</h3>
                     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                         {BADGES.map(badge => (
-                            <BadgeCard key={badge.id} badge={badge} isUnlocked={unlockedBadgeIds.includes(badge.id)} />
+                            <BadgeCard key={badge.id} badge={badge} isUnlocked={unlockedBadgeSet.has(badge.id)} />
                         ))}
                     </div>
                 </div>
