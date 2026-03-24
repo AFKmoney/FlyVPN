@@ -11,11 +11,12 @@ import { useAppContext } from './contexts/LocalizationContext';
 import { RealtimeThreatMap } from './components/intel/RealtimeThreatMap';
 import { PacketFlowVisualizer } from './components/intel/PacketFlowVisualizer';
 import { ConnectionLogManager } from './components/intel/ConnectionLogManager';
+import { BlankSlateAGI } from './components/intel/BlankSlateAGI';
 import { ProfileView } from './components/ProfileView';
 import { Toast, ToastData } from './components/ui/Toast';
 
 type View = 'dashboard' | 'servers' | 'settings' | 'devices';
-export type IntelView = 'threatMap' | 'packetVisualizer' | 'logManager' | 'warrantCanary';
+export type IntelView = 'threatMap' | 'packetVisualizer' | 'logManager' | 'warrantCanary' | 'blankSlate';
 
 const App: React.FC = () => {
   const [activeView, setActiveView] = useState<View>('dashboard');
@@ -76,6 +77,7 @@ const App: React.FC = () => {
       case 'threatMap': return <RealtimeThreatMap {...commonProps} onNeutralize={neutralizeThreat} userLocation={user.location} />;
       case 'packetVisualizer': return <PacketFlowVisualizer {...commonProps} />;
       case 'logManager': return <ConnectionLogManager {...commonProps} logs={logs} setLogs={() => {}} clearLogs={clearLogs} config={config} updateConfig={updateConfig} />;
+      case 'blankSlate': return <BlankSlateAGI {...commonProps} />;
       default: return null;
     }
   };
