@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { LogEntry, VPNConfig } from '../../types';
 import { Toggle } from '../ui/Toggle';
 
@@ -16,6 +16,8 @@ export const ConnectionLogManager: React.FC<ConnectionLogManagerProps> = ({ onCl
     const handleClearLogs = () => {
         clearLogs();
     };
+
+    const reversedLogs = useMemo(() => [...logs].reverse(), [logs]);
 
     const handleExportLogs = () => {
         if (logs.length === 0) return;
@@ -58,7 +60,7 @@ export const ConnectionLogManager: React.FC<ConnectionLogManagerProps> = ({ onCl
             <div className="flex-1 glass rounded-2xl p-4 flex flex-col min-h-0">
                 <div className="overflow-y-auto h-full">
                     {logs.length > 0 ? (
-                        [...logs].reverse().map((log, index) => (
+                        reversedLogs.map((log, index) => (
                             <div key={index} className="flex items-start gap-3 text-xs mono border-b border-white/5 py-2">
                                 <span className="text-slate-500 flex-shrink-0">{new Date(log.timestamp).toLocaleTimeString()}</span>
                                 <span className={`font-bold ${log.event === 'Error' ? 'text-rose-400' : 'text-cyan-400'}`}>{log.event}</span>
