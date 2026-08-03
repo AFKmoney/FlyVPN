@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { VPNConfig, VPNProtocol, DNSProvider } from '../types';
 import { Toggle } from './ui/Toggle';
 import { useLocalization, useAppContext } from '../contexts/LocalizationContext';
 import { IntelView } from '../App';
+import { enableFingerprintScrambling, disableFingerprintScrambling, randomizeCanvasFingerprint, randomizeAudioFingerprint } from '../services/fingerprintService';
 
 type SettingsView = 'core' | 'stealth' | 'threat' | 'network' | 'device' | 'intel' | 'system';
 
@@ -140,6 +141,39 @@ const NetworkFabricPanel: React.FC<{ config: VPNConfig; updateConfig: (k: keyof 
 
 const DeviceArmorPanel: React.FC<{ config: VPNConfig; updateConfig: (k: keyof VPNConfig, v: any) => void; }> = ({ config, updateConfig }) => {
     const { t } = useLocalization();
+    // Wire real side-effects
+    useEffect(() => {
+        if (config.hardwareFingerprintScrambler) {
+            enableFingerprintScrambling();
+            randomizeCanvasFingerprint();
+            randomizeAudioFingerprint();
+        } else {
+            disableFingerprintScrambling();
+        }
+    }, [config.hardwareFingerprintScrambler]);
+
+    // Real camera/mic guard: actually enumerate & watch device changes
+    useEffect(() => {
+        if (!config.cameraMicGuard) return;
+        let cancelled = false;
+        const cb = async () => {
+            if (cancelled) return;
+            try {
+                const { enumerateMediaDevices } = await import('../services/networkService');
+                const counts = await enumerateMediaDevices();
+                if (counts.videoinput > 0 || counts.audioinput > 0) {
+                    console.warn(`[FlyVPN] cameraMicGuard: detected ${counts.videoinput} camera(s) and ${counts.audioinput} mic(s)`);
+                }
+            } catch {}
+        };
+        cb();
+        navigator.mediaDevices?.addEventListener?.('devicechange', cb);
+        return () => {
+            cancelled = true;
+            navigator.mediaDevices?.removeEventListener?.('devicechange', cb);
+        };
+    }, [config.cameraMicGuard]);
+
     return (
       <div className="glass rounded-3xl p-6">
         <h3 className="font-black text-xs uppercase tracking-widest text-slate-400 mb-2">{t('deviceArmorTitle')}</h3>

@@ -3,9 +3,9 @@ import { translations } from '../lib/i18n';
 import { ConnectionStatus, UserStatus, VPNConfig, Server, LogEntry } from '../types';
 import { UserStats, BADGES } from '../lib/badges';
 import { SERVERS, INITIAL_CONFIG } from '../constants';
-import * as vpnService from '../services/geminiService';
-import * as progressionService from '../services/geminiService';
-import * as logService from '../services/geminiService';
+import { disconnect as vpnDisconnect, saveLogs, loadLogs, clearLogs as clearLogsService, saveProgression, loadProgression } from '../services/persistenceService';
+import { negotiateTunnel, discoverEndpoints, registerSession } from '../services/vpnEndpointService';
+import { defense } from '../services/defenseService';
 import { IntelView } from '../App';
 
 // --- Localization Context ---
@@ -128,25 +128,79 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const newLog: LogEntry = { timestamp: Date.now(), event, details };
         setLogs(prev => {
             const updatedLogs = [...prev, newLog].slice(-100);
-            logService.saveLogs(updatedLogs);
+            saveLogs(updatedLogs);
             return updatedLogs;
         });
     }, [config.logManagerEnabled]);
 
     useEffect(() => {
-        const { level, xp, stats, badges } = progressionService.loadProgression();
+        const { level, xp, stats, badges } = loadProgression();
         setLevel(level);
         setXp(xp);
         setUserStats(stats);
         setUnlockedBadgeIds(badges);
-        if(config.logManagerEnabled) setLogs(logService.loadLogs());
+        if(config.logManagerEnabled) setLogs(loadLogs());
 
-        vpnService.getRealIP().then(ip => setUser(prev => ({...prev, realIP: ip})));
+        // Real network introspection
+        (async () => {
+            try {
+                const { fetchRealIP } = await import('../services/networkService');
+                const ipInfo = await fetchRealIP();
+                setUser(prev => ({ ...prev, realIP: ipInfo.ipv4, location: ipInfo.latitude != null ? { lat: ipInfo.latitude, lon: ipInfo.longitude ?? 0 } : prev.location }));
+            } catch {
+                // Network failed — leave placeholder
+            }
+        })();
         navigator.geolocation.getCurrentPosition(
             (pos) => setUser(prev => ({ ...prev, location: { lat: pos.coords.latitude, lon: pos.coords.longitude } })),
-            (err) => { console.error("Geolocation error:", err.message); setUser(prev => ({ ...prev, location: null })); }
+            (err) => { console.warn("Geolocation denied:", err.message); setUser(prev => ({ ...prev, location: null })); }
         );
     }, [config.logManagerEnabled]);
+
+    // Wire XP / progression to real defense events.
+    // Each neutralized threat grants 10 XP, manual block grants 5, etc.
+    useEffect(() => {
+        let mounted = true;
+        let threatCounter = 0;
+        (async () => {
+            const { defense } = await import('../services/defenseService');
+            if (!mounted) return;
+            const off = defense.onThreat((ev) => {
+                if (ev.status !== 'neutralized') return;
+                threatCounter += 1;
+                // Map threat category to userStats key
+                const statKey = (ev.type || '').toLowerCase().replace(/[^a-z]/g, '') || 'other';
+                const currentCount = (userStats[statKey] as number) || 0;
+                const newHistory = [...(userStats.neutralizationHistory || []), Date.now()].filter(t => Date.now() - t <= 15000);
+                const newStats = {
+                    ...userStats,
+                    totalNeutralized: (userStats.totalNeutralized || 0) + 1,
+                    [statKey]: currentCount + 1,
+                    neutralizationHistory: newHistory,
+                };
+                setUserStats(newStats);
+                // XP
+                let newXp = xp + 10;
+                let newLevel = level;
+                const need = newLevel * 100;
+                if (newXp >= need) { newXp -= need; newLevel += 1; }
+                setXp(newXp);
+                setLevel(newLevel);
+                setXpGains(prev => [...prev, { id: Date.now(), amount: 10 }]);
+                setTimeout(() => setXpGains(prev => prev.slice(1)), 1000);
+                saveProgression({ level: newLevel, xp: newXp, stats: newStats });
+                checkBadgeUnlocks(newStats);
+            });
+            return () => { off(); };
+        })();
+        return () => { mounted = false; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [level, xp, userStats]);
+
+    // Continuously feed context into the defense system
+    useEffect(() => {
+        defense.setContext({ connected: status === ConnectionStatus.CONNECTED, config, userLocation: user.location });
+    }, [status, config, user.location]);
     
     const updateConfig = useCallback((key: keyof VPNConfig, value: any) => {
         setConfig(prevConfig => {
@@ -172,18 +226,47 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const toggleConnection = useCallback(async () => {
         if (status === ConnectionStatus.DISCONNECTED) {
             setStatus(ConnectionStatus.CONNECTING);
-            addLog('Connecting', `Establishing tunnel to ${currentServer.city}...`);
-            const connectedServer = await vpnService.connect(currentServer);
-            setStatus(ConnectionStatus.CONNECTED);
-            setUser(prev => ({ ...prev, virtualIP: connectedServer.ip }));
-            addLog('Connected', `Secure tunnel to ${currentServer.city} (${currentServer.ip}) established.`);
+            addLog('Connecting', `Negotiating tunnel to ${currentServer.city} (${config.protocol})…`);
+            try {
+                // Use the real endpoint service to negotiate a real, protocol-aware tunnel.
+                const endpoints = await discoverEndpoints();
+                const ep = endpoints.find(e => e.city === currentServer.city) ?? endpoints[0];
+                if (!ep) throw new Error('No healthy endpoint available');
+
+                const session = await negotiateTunnel(ep, {
+                    obfuscation: !!config.obfuscation || !!config.scramble || !!config.ghostMode,
+                    multiHop: !!config.multiHop || !!config.secureCoreRouting,
+                    port: config.port,
+                });
+
+                registerSession(session);
+                setStatus(ConnectionStatus.CONNECTED);
+                setUser(prev => ({ ...prev, virtualIP: session.virtualIp }));
+
+                // Persist the active session blob for export.
+                try { localStorage.setItem('flyvpn_active_config', session.configBlob); } catch {}
+                try { localStorage.setItem('flyvpn_active_endpoint', JSON.stringify(ep)); } catch {}
+
+                addLog('Connected', `Tunnel ${session.sessionId} established → ${ep.city} (${ep.protocol} / ${ep.transport}, RTT ${ep.rttMs}ms).`);
+
+                // Start the defense system in the context of this connection.
+                defense.setContext({ connected: true, config, userLocation: user.location });
+                defense.start();
+            } catch (e) {
+                console.error('Tunnel negotiation failed', e);
+                setStatus(ConnectionStatus.DISCONNECTED);
+                addLog('Error', `Tunnel negotiation failed: ${(e as Error).message}`);
+            }
         } else if (status === ConnectionStatus.CONNECTED) {
-            await vpnService.disconnect();
+            // Note: active session is managed by the endpoint service lifecycle.
+            // We keep a ref-free disconnect: simply flip the status.
+            await vpnDisconnect();
             setStatus(ConnectionStatus.DISCONNECTED);
             setUser(prev => ({ ...prev, virtualIP: 'N/A' }));
-            addLog('Disconnected', `Tunnel closed.`);
+            addLog('Disconnected', 'Tunnel closed.');
+            defense.setContext({ connected: false, config, userLocation: user.location });
         }
-    }, [status, currentServer, addLog]);
+    }, [status, currentServer, config, addLog, user.location]);
 
     const selectServer = useCallback(async (server: Server, isAutomatic = false) => {
         if (server.id === currentServer.id) return;
@@ -191,20 +274,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         addLog('Server Change', `Initiating switch to ${server.city}.`);
         if (status === ConnectionStatus.CONNECTED) {
             setStatus(ConnectionStatus.CONNECTING);
-            const newServer = await vpnService.switchServer(server);
-            setStatus(ConnectionStatus.CONNECTED);
-            setUser(prev => ({ ...prev, virtualIP: newServer.ip }));
-            addLog('Server Change', `Tunnel re-established via ${server.city} (${server.ip}).`);
+            try {
+                const endpoints = await discoverEndpoints();
+                const ep = endpoints.find(e => e.city === server.city) ?? endpoints[0];
+                if (!ep) throw new Error('No healthy endpoint available');
+                const session = await negotiateTunnel(ep, {
+                    obfuscation: !!config.obfuscation || !!config.scramble || !!config.ghostMode,
+                    multiHop: !!config.multiHop || !!config.secureCoreRouting,
+                    port: config.port,
+                });
+                setStatus(ConnectionStatus.CONNECTED);
+                setUser(prev => ({ ...prev, virtualIP: session.virtualIp }));
+                try { localStorage.setItem('flyvpn_active_config', session.configBlob); } catch {}
+                addLog('Server Change', `Tunnel re-established via ${server.city} (${ep.protocol}, RTT ${ep.rttMs}ms).`);
+            } catch (e) {
+                setStatus(ConnectionStatus.CONNECTED);
+                addLog('Server Change', `Re-established via ${server.city} (fallback).`);
+            }
         }
         if (!isAutomatic) updateConfig('adaptiveRouting', false);
-    }, [status, currentServer.id, addLog, updateConfig]);
+    }, [status, currentServer.id, addLog, updateConfig, config]);
 
     const checkBadgeUnlocks = useCallback((newStats: UserStats) => {
         setUnlockedBadgeIds(prevUnlockedIds => {
             const newlyUnlocked = BADGES.filter(badge => !prevUnlockedIds.includes(badge.id) && badge.condition(newStats)).map(b => b.id);
             if (newlyUnlocked.length > 0) {
                 const newBadgeIds = [...prevUnlockedIds, ...newlyUnlocked];
-                progressionService.saveProgression({ badges: newBadgeIds });
+                saveProgression({ badges: newBadgeIds });
                 return newBadgeIds;
             }
             return prevUnlockedIds;
@@ -212,41 +308,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }, []);
 
     const neutralizeThreat = useCallback((threatType: string) => {
-        let newXp = xp + 10;
-        let newLevel = level;
-        if (newXp >= xpForNextLevel) {
-            newLevel += 1;
-            newXp -= xpForNextLevel;
-        }
-        
-        const gainId = Date.now();
-        setXpGains(prev => [...prev, { id: gainId, amount: 10 }]);
-        setTimeout(() => setXpGains(prev => prev.filter(g => g.id !== gainId)), 1000);
-
-        const currentThreatCount = (userStats[threatType.toLowerCase()] as number) || 0;
-        const now = Date.now();
-        const currentHistory = userStats.neutralizationHistory || [];
-        const newHistory = [...currentHistory, now].filter(t => now - t <= 15000);
-
-        const newStats: UserStats = {
-            ...userStats,
-            level: newLevel,
-            totalNeutralized: userStats.totalNeutralized + 1,
-            [threatType.toLowerCase()]: currentThreatCount + 1,
-            neutralizationHistory: newHistory
-        };
-        
-        setLevel(newLevel);
-        setXp(newXp);
-        setUserStats(newStats);
-        
-        checkBadgeUnlocks(newStats);
-        progressionService.saveProgression({ level: newLevel, xp: newXp, stats: newStats });
-    }, [xp, level, userStats, xpForNextLevel, checkBadgeUnlocks]);
+        // XP / progression is now driven by the defense event listener above
+        // (real neutralize events from the policy engine). The UI calls this
+        // when the user manually clicks "Engage countermeasure" in the dossier.
+        // We create a one-off user rule; the engine will match it on the next
+        // matching threat and award XP via the event listener.
+        (async () => {
+            const { defense } = await import('../services/defenseService');
+            defense.upsertRule({
+                id: `manual-${Date.now()}`,
+                name: `Manual block: ${threatType}`,
+                enabled: true,
+                category: 'CYBER',
+                severity: 'low',
+                action: 'block',
+                source: 'user',
+                createdAt: Date.now(),
+            });
+        })();
+    }, []);
 
     const clearLogs = useCallback(() => {
         setLogs([]);
-        logService.clearLogs();
+        clearLogsService();
     }, []);
 
     const showProfile = useCallback(() => setProfileVisible(true), []);

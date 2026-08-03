@@ -1,164 +1,141 @@
-import React, { useState, useEffect, useMemo, useRef, useReducer } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useReducer, useCallback } from 'react';
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, LabelList, Cell, LineChart, Line, Tooltip, CartesianGrid } from 'recharts';
 import { MapContainer, TileLayer, Marker, CircleMarker, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
+import { defense } from '../../services/defenseService';
+import { ThreatEvent, ThreatSeverity, DefenseRule, RuleAction, AuditEntry, ThreatCategory } from '../../services/defenseTypes';
 
-// --- INTEL CONFIGURATION ---
+// =============================================================================
+//  CONFIGURATION
+// =============================================================================
 
-// 1. Global Cyber Threats (WAN)
-const CYBER_THREATS = ['Phishing', 'Malware', 'DDoS', 'Spyware', 'Adware', 'Ransomware', 'Botnet Activity'];
-
-// 2. Hyper-Local RF Threats (LAN/Physical)
-const RF_THREATS: Record<string, { min: number, max: number, unit: string, band: string, type: string }> = {
-    'VHF/UHF Intercept': { min: 30, max: 1000, unit: 'MHz', band: 'VHF/UHF', type: 'Local Radio Interception' },
-    'L-Band Surveillance': { min: 1.0, max: 2.0, unit: 'GHz', band: 'L-Band', type: 'Long Range Radar' },
-    'S-Band Radar': { min: 2.0, max: 4.0, unit: 'GHz', band: 'S-Band', type: 'Weather/Airport Radar' },
-    'C-Band Radar': { min: 4.0, max: 8.0, unit: 'GHz', band: 'C-Band', type: 'Satellite Uplink' },
-    'X-Band Radar': { min: 8.0, max: 12.0, unit: 'GHz', band: 'X-Band', type: 'Precision Targeting' }, 
-    'Directed Microwave': { min: 10.0, max: 40.0, unit: 'GHz', band: 'mmWave', type: 'Directed Energy' },
-    'WiFi-Band Extraction': { min: 2.4, max: 5.9, unit: 'GHz', band: 'ISM', type: 'Network Sniffing' },
-    'Ultrasonic Sensor': { min: 20, max: 100, unit: 'kHz', band: 'Acoustic', type: 'Audio Surveillance' },
+const SEVERITY_COLORS: Record<ThreatSeverity, string> = {
+    low:      '#10b981',
+    medium:   '#f59e0b',
+    high:     '#f97316',
+    critical: '#ef4444',
 };
 
-const RF_THREAT_KEYS = Object.keys(RF_THREATS);
+const CATEGORY_COLOR: Record<'CYBER' | 'RF', string> = {
+    CYBER: '#ef4444',
+    RF:    '#a855f7',
+};
 
-// Active Defense Protocols
-const COUNTER_MEASURES_CYBER = [
-    "Injecting TCP RST Packet",
-    "Sending HTTP 500 Fake Error",
-    "Flooding Handshake with Garbage",
-    "Corrupting Payload Header",
-    "Spoofing 'Connection Refused'"
+const ACTION_COLOR: Record<RuleAction, string> = {
+    block:    '#ef4444',
+    throttle: '#f59e0b',
+    scrub:    '#3b82f6',
+    jam:      '#a855f7',
+    log:      '#64748b',
+    redirect: '#06b6d4',
+    alert:    '#facc15',
+};
+
+const CATEGORY_LIST: Array<{ id: 'CYBER' | 'RF'; label: string }> = [
+    { id: 'CYBER', label: 'Cyber' },
+    { id: 'RF',    label: 'RF / Spectrum' },
 ];
 
-const COUNTER_MEASURES_RF = [
-    "Broadcasting White Noise Error",
-    "Frequency Hopping Initiated",
-    "Phase Cancellation Pulse",
-    "Generating Phantom Signal",
-    "Emitting Jamming Wave"
-];
+const SEVERITY_LIST: ThreatSeverity[] = ['low', 'medium', 'high', 'critical'];
 
-const COUNTRIES: Record<string, { lat: number, lon: number, ipPrefix: string }> = { "Russia": { lat: 61.5240, lon: 105.3188, ipPrefix: '91.192' }, "China": { lat: 35.8617, lon: 104.1954, ipPrefix: '113.88' }, "North Korea": { lat: 40.3399, lon: 127.5101, ipPrefix: '175.45' }, "Iran": { lat: 32.4279, lon: 53.6880, ipPrefix: '80.75' }, "Brazil": { lat: -14.2350, lon: -51.9253, ipPrefix: '189.1' }, "Nigeria": { lat: 9.0820, lon: 8.6753, ipPrefix: '105.112' }, "United States": { lat: 38.0, lon: -97.0, ipPrefix: '68.180' }, "Germany": { lat: 51.0, lon: 9.0, ipPrefix: '84.116' }, "India": { lat: 20.5937, lon: 78.9629, ipPrefix: '115.96' }, "Vietnam": { lat: 14.0583, lon: 108.2772, ipPrefix: '113.160' }};
-const COUNTRY_KEYS = Object.keys(COUNTRIES);
+const ACTION_LABELS: Record<RuleAction, string> = {
+    block:    'Block',
+    throttle: 'Throttle',
+    scrub:    'Scrub',
+    jam:      'Jam',
+    log:      'Log',
+    redirect: 'Sinkhole',
+    alert:    'Alert',
+};
 
-type ThreatStatus = 'detecting' | 'locking' | 'neutralizing' | 'neutralized';
+// =============================================================================
+//  STATE
+// =============================================================================
 
-interface Threat { 
-    id: number; 
-    category: 'CYBER' | 'RF';
-    type: string; 
-    
-    // Cyber specific
-    sourceCountry?: string; 
-    ip?: string; 
-    
-    // RF specific
-    frequency?: string;
-    signalBand?: string;
-    powerLevel?: string; // dBm
-    distance?: string;
-    subType?: string;
-    wavelength?: string;
-    
-    // Common
-    coords: { lat: number, lon: number }; 
-    timestamp: number; 
-    status: ThreatStatus; 
-    counterMeasure?: string;
+interface MapState {
+    threats: ThreatEvent[];
+    activeLines: Array<{ id: number; positions: [number, number][]; color: string; type: 'attack' | 'defense' }>;
+    intensityHistory: { time: string; count: number }[];
+    selectedRule: DefenseRule | null;
 }
 
-type AnimationLine = { id: number; positions: [number, number][]; color: string; type: 'attack' | 'defense' };
+type MapAction =
+    | { type: 'ADD_THREAT'; payload: { threat: ThreatEvent; line?: MapState['activeLines'][number] } }
+    | { type: 'UPDATE_THREAT'; payload: { id: number; patch: Partial<ThreatEvent> } }
+    | { type: 'CLEAR_LINE'; payload: number }
+    | { type: 'CLEAR' }
+    | { type: 'TICK_HISTORY' }
+    | { type: 'SELECT_RULE'; payload: DefenseRule | null };
 
-// --- Intelligence Engines ---
-
-const generateRandomFreq = (min: number, max: number, precision: number) => {
-    return (Math.random() * (max - min) + min).toFixed(precision);
+const initialState: MapState = {
+    threats: [],
+    activeLines: [],
+    intensityHistory: Array.from({length: 20}, (_, i) => ({ time: i.toString(), count: 0 })),
+    selectedRule: null,
 };
 
-// Generates a coordinate very close to the user (simulating local surveillance)
-const getOffsetLocation = (base: {lat: number, lon: number}) => {
-    // 0.0001 degrees is roughly 11 meters. 
-    // We want threats within ~50-500 meters.
-    const latOffset = (Math.random() - 0.5) * 0.008; 
-    const lonOffset = (Math.random() - 0.5) * 0.008;
-    return { lat: base.lat + latOffset, lon: base.lon + lonOffset };
-};
-
-const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
-    const R = 6371e3; // metres
-    const φ1 = lat1 * Math.PI/180;
-    const φ2 = lat2 * Math.PI/180;
-    const Δφ = (lat2-lat1) * Math.PI/180;
-    const Δλ = (lon2-lon1) * Math.PI/180;
-    const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ/2) * Math.sin(Δλ/2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    return Math.round(R * c);
-};
-
-const calculateWavelength = (freqVal: number, unit: string) => {
-    // c = f * lambda => lambda = c / f
-    const c = 3e8;
-    let hz = freqVal;
-    if (unit === 'kHz') hz *= 1e3;
-    if (unit === 'MHz') hz *= 1e6;
-    if (unit === 'GHz') hz *= 1e9;
-    const lambda = c / hz;
-    if (lambda < 0.01) return (lambda * 1000).toFixed(2) + " mm";
-    if (lambda < 1) return (lambda * 100).toFixed(2) + " cm";
-    return lambda.toFixed(2) + " m";
-}
-
-// Audio System
-let sharedAudioCtx: AudioContext | null = null;
-
-const playAlertSound = (type: 'CYBER' | 'RF' | 'LOCK') => {
-    try {
-        let ctx = sharedAudioCtx;
-        if (!ctx) {
-            const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
-            if (!AudioContext) return;
-            ctx = new AudioContext();
-            sharedAudioCtx = ctx;
+const mapReducer = (state: MapState, action: MapAction): MapState => {
+    switch (action.type) {
+        case 'ADD_THREAT': {
+            const { threat, line } = action.payload;
+            const exists = state.threats.some(t => t.id === threat.id);
+            if (exists) {
+                return {
+                    ...state,
+                    threats: state.threats.map(t => t.id === threat.id ? threat : t),
+                    activeLines: line ? [...state.activeLines, line] : state.activeLines,
+                };
+            }
+            return {
+                ...state,
+                threats: [threat, ...state.threats].slice(0, 200),
+                activeLines: line ? [...state.activeLines, line] : state.activeLines,
+            };
         }
-        const oscillator = ctx.createOscillator();
-        const gainNode = ctx.createGain();
-
-        oscillator.connect(gainNode);
-        gainNode.connect(ctx.destination);
-
-        if (type === 'RF') {
-            // Sonar ping
-            oscillator.type = 'sine';
-            oscillator.frequency.setValueAtTime(800, ctx.currentTime);
-            oscillator.frequency.exponentialRampToValueAtTime(400, ctx.currentTime + 0.2);
-            gainNode.gain.setValueAtTime(0.1, ctx.currentTime);
-            gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
-            oscillator.start();
-            oscillator.stop(ctx.currentTime + 0.2);
-        } else if (type === 'LOCK') {
-            // Aggressive lock sound
-            oscillator.type = 'sawtooth';
-            oscillator.frequency.setValueAtTime(1200, ctx.currentTime);
-            oscillator.frequency.linearRampToValueAtTime(2400, ctx.currentTime + 0.1);
-            gainNode.gain.setValueAtTime(0.05, ctx.currentTime);
-            gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
-            oscillator.start();
-            oscillator.stop(ctx.currentTime + 0.15);
-        } else {
-            // Digital glitch
-            oscillator.type = 'square';
-            oscillator.frequency.setValueAtTime(150, ctx.currentTime);
-            oscillator.frequency.linearRampToValueAtTime(100, ctx.currentTime + 0.1);
-            gainNode.gain.setValueAtTime(0.05, ctx.currentTime);
-            gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.1);
-            oscillator.start();
-            oscillator.stop(ctx.currentTime + 0.1);
+        case 'UPDATE_THREAT':
+            return {
+                ...state,
+                threats: state.threats.map(t => t.id === action.payload.id ? { ...t, ...action.payload.patch } : t),
+            };
+        case 'CLEAR_LINE':
+            return { ...state, activeLines: state.activeLines.filter(l => l.id !== action.payload) };
+        case 'CLEAR':
+            return { ...state, threats: [], activeLines: [] };
+        case 'TICK_HISTORY': {
+            const activeCount = state.threats.filter(t => t.status === 'detecting' || t.status === 'locking' || t.status === 'neutralizing').length;
+            return {
+                ...state,
+                intensityHistory: [...state.intensityHistory.slice(1), { time: new Date().toLocaleTimeString(), count: activeCount }],
+            };
         }
-    } catch (e) {
-        // Audio might be blocked by browser
+        case 'SELECT_RULE':
+            return { ...state, selectedRule: action.payload };
+        default:
+            return state;
     }
 };
+
+// =============================================================================
+//  ANIMATION
+// =============================================================================
+
+const generateInterPath = (start: [number, number], end: [number, number]): [number, number][] => {
+    const steps = 20;
+    const path: [number, number][] = [];
+    for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        const lat = start[0] + (end[0] - start[0]) * t;
+        const lon = start[1] + (end[1] - start[1]) * t;
+        // Add slight arc
+        const arc = Math.sin(t * Math.PI) * 0.5;
+        path.push([lat + arc * (Math.random() - 0.5) * 0.1, lon + arc * (Math.random() - 0.5) * 0.1]);
+    }
+    return path;
+};
+
+// =============================================================================
+//  LEAFLET ICONS
+// =============================================================================
 
 const userIcon = new L.DivIcon({
     html: `<div class="user-location-pulse"></div>`,
@@ -167,201 +144,35 @@ const userIcon = new L.DivIcon({
     iconAnchor: [8, 8]
 });
 
-const rfIcon = new L.DivIcon({
-    html: `<div class="relative w-4 h-4">
-            <div class="absolute inset-0 bg-purple-500 rounded-full animate-ping opacity-75"></div>
-            <div class="absolute inset-0 bg-purple-500 rounded-full border-2 border-white shadow-[0_0_15px_#a855f7]"></div>
-           </div>`,
-    className: 'rf-threat-icon',
-    iconSize: [16, 16],
-    iconAnchor: [8, 8]
-});
-
-// --- State Management ---
-type MapState = {
-  threats: Threat[];
-  threatStats: Record<string, number>;
-  activeLines: AnimationLine[];
-  intensityHistory: { time: string, count: number }[];
+const threatIcon = (severity: ThreatSeverity, status: string): L.DivIcon => {
+    const color = SEVERITY_COLORS[severity];
+    const ring = status === 'neutralized' ? 'opacity-40' : status === 'neutralizing' ? 'animate-ping' : 'animate-pulse';
+    return new L.DivIcon({
+        html: `<div class="relative w-5 h-5">
+                <div class="absolute inset-0 ${ring} rounded-full opacity-50" style="background:${color}"></div>
+                <div class="absolute inset-1 rounded-full border-2 border-white shadow-[0_0_15px_${color}]" style="background:${color}"></div>
+               </div>`,
+        className: 'threat-marker',
+        iconSize: [20, 20],
+        iconAnchor: [10, 10],
+    });
 };
 
-type MapAction =
-  | { type: 'ADD_THREAT'; payload: { threat: Threat; line?: AnimationLine } }
-  | { type: 'UPDATE_STATUS'; payload: { threatId: number; status: ThreatStatus } }
-  | { type: 'ADD_DEFENSE_LINE'; payload: { line: AnimationLine } }
-  | { type: 'FINISH_NEUTRALIZE'; payload: { threatId: number; counterMeasure: string } }
-  | { type: 'CLEAR_LINE'; payload: number }
-  | { type: 'TICK_HISTORY'; payload: null };
-
-const initialState: MapState = {
-  threats: [],
-  threatStats: {},
-  activeLines: [],
-  intensityHistory: Array.from({length: 20}, (_, i) => ({ time: i.toString(), count: 0 }))
-};
-
-const mapReducer = (state: MapState, action: MapAction): MapState => {
-  switch (action.type) {
-    case 'ADD_THREAT': {
-      const { threat, line } = action.payload;
-      const newLines = line ? [...state.activeLines, line] : state.activeLines;
-      return {
-        ...state,
-        threats: [threat, ...state.threats].slice(0, 100),
-        threatStats: { ...state.threatStats, [threat.type]: (state.threatStats[threat.type] || 0) + 1 },
-        activeLines: newLines
-      };
-    }
-    case 'UPDATE_STATUS': {
-        return {
-            ...state,
-            threats: state.threats.map(t => t.id === action.payload.threatId ? { ...t, status: action.payload.status } : t),
-        };
-    }
-    case 'ADD_DEFENSE_LINE': {
-        return {
-            ...state,
-            activeLines: [...state.activeLines, action.payload.line]
-        };
-    }
-    case 'FINISH_NEUTRALIZE': {
-      const { threatId, counterMeasure } = action.payload;
-      return {
-        ...state,
-        threats: state.threats.map(t => t.id === threatId ? { ...t, status: 'neutralized', counterMeasure } : t),
-        activeLines: state.activeLines.filter(l => l.id !== threatId + 10000)
-      };
-    }
-    case 'CLEAR_LINE':
-      return { ...state, activeLines: state.activeLines.filter(l => l.id !== action.payload) };
-    case 'TICK_HISTORY':
-        const activeCount = state.threats.filter(t => t.status === 'detecting' || t.status === 'locking').length;
-        const newHistory = [...state.intensityHistory.slice(1), { time: new Date().toLocaleTimeString(), count: activeCount }];
-        return { ...state, intensityHistory: newHistory };
-    default:
-      return state;
-  }
-};
+// =============================================================================
+//  RECENTER HELPER
+// =============================================================================
 
 const RecenterMap = ({ center }: { center: { lat: number; lon: number } | null }) => {
     const map = useMap();
     useEffect(() => {
-        if (center) {
-            map.flyTo([center.lat, center.lon], map.getZoom());
-        }
+        if (center) map.flyTo([center.lat, center.lon], map.getZoom(), { animate: true, duration: 0.6 });
     }, [center, map]);
     return null;
 };
 
-const ThreatDossier = ({ threat, onClose }: { threat: Threat, onClose: () => void }) => (
-    <div className="absolute top-0 right-0 h-full w-96 glass p-0 z-[1000] flex flex-col animate-in slide-in-from-right-4 duration-300 border-l border-white/10 shadow-2xl">
-        <div className="flex items-center justify-between p-4 border-b border-white/10 bg-slate-900/50">
-            <h3 className={`font-bold uppercase tracking-wider text-sm flex items-center gap-2 ${threat.category === 'RF' ? 'text-purple-400' : 'text-rose-400'}`}>
-                {threat.category === 'RF' ? 'SIGNAL INTERCEPT' : 'CYBER THREAT'}
-            </h3>
-            <button onClick={onClose} className="text-xl text-slate-400 hover:text-white">&times;</button>
-        </div>
-        
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            {/* Primary Info Card */}
-            <div className={`p-4 rounded-lg border ${threat.category === 'RF' ? 'bg-purple-900/20 border-purple-500/30' : 'bg-rose-900/20 border-rose-500/30'}`}>
-                <div className="text-slate-400 font-bold uppercase text-[10px] mb-1">Signature Detected</div>
-                <div className="font-black text-slate-100 text-xl leading-tight">{threat.type}</div>
-                {threat.subType && <div className="text-xs text-slate-300 mt-1">{threat.subType}</div>}
-            </div>
-
-            {/* Spectrum Analysis for RF */}
-            {threat.category === 'RF' && (
-                <div className="space-y-2">
-                    <div className="flex items-center gap-2 mb-2">
-                        <div className="h-px bg-slate-700 flex-1"></div>
-                        <span className="text-[10px] font-bold uppercase text-slate-500">Spectrum Analysis</span>
-                        <div className="h-px bg-slate-700 flex-1"></div>
-                    </div>
-                    
-                    <div className="grid grid-cols-2 gap-2">
-                         <div className="bg-slate-800/50 p-2 rounded border border-white/5">
-                            <div className="text-purple-400 font-bold uppercase text-[9px]">Frequency</div>
-                            <div className="font-mono text-sm text-white">{threat.frequency}</div>
-                        </div>
-                        <div className="bg-slate-800/50 p-2 rounded border border-white/5">
-                            <div className="text-purple-400 font-bold uppercase text-[9px]">Band</div>
-                            <div className="font-mono text-sm text-white">{threat.signalBand}</div>
-                        </div>
-                        <div className="bg-slate-800/50 p-2 rounded border border-white/5">
-                            <div className="text-purple-400 font-bold uppercase text-[9px]">Signal Strength</div>
-                            <div className="font-mono text-sm text-white">{threat.powerLevel}</div>
-                        </div>
-                        <div className="bg-slate-800/50 p-2 rounded border border-white/5">
-                            <div className="text-purple-400 font-bold uppercase text-[9px]">Wavelength</div>
-                            <div className="font-mono text-sm text-white">{threat.wavelength}</div>
-                        </div>
-                    </div>
-                    
-                    <div className="bg-slate-900 p-2 rounded border border-white/5 mt-2">
-                         <div className="flex justify-between text-[9px] uppercase text-slate-500 font-bold mb-1">
-                            <span>Waveform Confidence</span>
-                            <span>99.9%</span>
-                        </div>
-                        <div className="w-full h-8 flex items-end gap-0.5 opacity-80">
-                            {[40, 60, 30, 80, 50, 90, 20, 40, 60, 80, 50, 70, 30, 60, 90, 50, 30, 60, 40, 70].map((h, i) => (
-                                <div key={i} style={{height: `${h}%`}} className="flex-1 bg-purple-500 rounded-sm"></div>
-                            ))}
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* Network Info for Cyber */}
-            {threat.category === 'CYBER' && (
-                <div className="space-y-2">
-                    <div className="grid grid-cols-2 gap-2">
-                        <div className="bg-slate-800/50 p-2 rounded border border-white/5">
-                            <div className="text-slate-500 font-bold uppercase text-[10px]">Source Origin</div>
-                            <div className="font-semibold text-slate-200">{threat.sourceCountry}</div>
-                        </div>
-                        <div className="bg-slate-800/50 p-2 rounded border border-white/5">
-                            <div className="text-slate-500 font-bold uppercase text-[10px]">Threat Level</div>
-                            <div className="font-bold text-rose-500 animate-pulse">CRITICAL</div>
-                        </div>
-                    </div>
-                    <div className="bg-slate-800/50 p-2 rounded border border-white/5">
-                        <div className="text-slate-500 font-bold uppercase text-[10px]">Targeted IP</div>
-                        <div className="mono text-slate-300 bg-slate-900/50 px-2 py-1 rounded inline-block border border-white/5 text-xs">{threat.ip}</div>
-                    </div>
-                </div>
-            )}
-
-            <div className="pt-4 border-t border-white/10 mt-2">
-                <div className="text-slate-500 font-bold uppercase text-[10px] mb-2">Defense Status</div>
-                {threat.status === 'neutralized' 
-                    ? <div className="p-3 bg-emerald-900/20 border border-emerald-500/30 rounded text-emerald-400 flex flex-col gap-1 animate-in zoom-in duration-300">
-                        <div className="font-bold flex items-center gap-2"><span className="text-lg">✓</span> THREAT NEUTRALIZED</div>
-                        <div className="text-[10px] uppercase tracking-wider text-emerald-300/70">Data Secure</div>
-                      </div>
-                    : <div className="p-3 bg-amber-900/20 border border-amber-500/30 rounded text-amber-400 flex items-center gap-2">
-                        <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                        {threat.status === 'detecting' ? 'ACQUIRING TARGET...' : 'ENGAGING COUNTERMEASURE...'}
-                      </div>
-                }
-            </div>
-
-            {threat.counterMeasure && (
-                <div className="animate-in fade-in slide-in-from-bottom-2 duration-500 mt-4">
-                    <div className="text-slate-500 font-bold uppercase text-[10px] mb-1">Countermeasure Payload</div>
-                    <div className={`font-mono text-xs p-3 rounded border bg-slate-950 shadow-inner ${threat.category === 'RF' ? 'border-purple-500/20 text-purple-300' : 'border-cyan-500/20 text-cyan-300'}`}>
-                        <div className="opacity-50 text-[9px] mb-1">&gt;&gt; TRANSMITTING ERROR PACKET...</div>
-                        <div className="font-bold">{`> ${threat.counterMeasure}`}</div>
-                        <div className="text-emerald-500 mt-1">&gt;&gt; SENT OK</div>
-                    </div>
-                    <p className="text-[9px] text-slate-500 mt-2 italic">
-                        * Real data protected. Error message sent to attacker.
-                    </p>
-                </div>
-            )}
-        </div>
-    </div>
-);
+// =============================================================================
+//  COMPONENT
+// =============================================================================
 
 interface RealtimeThreatMapProps {
     onClose: () => void;
@@ -369,325 +180,586 @@ interface RealtimeThreatMapProps {
     userLocation: { lat: number; lon: number } | null;
 }
 
-export const RealtimeThreatMap: React.FC<RealtimeThreatMapProps> = ({onClose, onNeutralize, userLocation}) => {
+export const RealtimeThreatMap: React.FC<RealtimeThreatMapProps> = ({ onClose, onNeutralize, userLocation }) => {
     const [state, dispatch] = useReducer(mapReducer, initialState);
-    const { threats, threatStats, activeLines, intensityHistory } = state;
-    const [selectedThreat, setSelectedThreat] = useState<Threat | null>(null);
-    const modalRef = useRef<HTMLDivElement>(null);
-    const [isFullscreen, setIsFullscreen] = useState(false);
+    const { threats, activeLines, intensityHistory, selectedRule } = state;
+    const [selectedThreat, setSelectedThreat] = useState<ThreatEvent | null>(null);
 
+    // Filters & controls
+    const [filterCategory, setFilterCategory] = useState<'all' | 'CYBER' | 'RF'>('all');
+    const [filterSeverity, setFilterSeverity] = useState<ThreatSeverity | 'all'>('all');
+    const [filterStatus, setFilterStatus] = useState<'active' | 'all' | 'neutralized'>('active');
+    const [search, setSearch] = useState('');
+    const [autoNeutralize, setAutoNeutralize] = useState(true);
+    const [paused, setPaused] = useState(false);
+    const [rules, setRules] = useState<DefenseRule[]>(defense.getRules());
+    const [showRules, setShowRules] = useState(false);
+    const [showAudit, setShowAudit] = useState(false);
+    const [auditEntries, setAuditEntries] = useState<AuditEntry[]>(defense.getAudit());
+    const [recentFeed, setRecentFeed] = useState<{ asn: string; name: string; cc: string; events: number; reputation: number }[]>([]);
+    const [showFeed, setShowFeed] = useState(true);
+    const [stats, setStats] = useState(defense.getStats());
+    const [mapCenter, setMapCenter] = useState<{ lat: number; lon: number } | null>(userLocation);
+    const [zoomToThreat, setZoomToThreat] = useState<number | null>(null);
+
+    // Wire up the defense system
     useEffect(() => {
-        const interval = setInterval(() => {
-            // Priority: RF threats if user location is known (High Tech feel)
-            const isRF = userLocation && Math.random() < 0.6;
-            let newThreat: Threat;
-            let line: AnimationLine | undefined;
-
-            if (isRF && userLocation) {
-                // Generate RF Threat near user
-                const threatTypeKey = RF_THREAT_KEYS[Math.floor(Math.random() * RF_THREAT_KEYS.length)];
-                const config = RF_THREATS[threatTypeKey];
-                const coords = getOffsetLocation(userLocation);
-                const distance = calculateDistance(userLocation.lat, userLocation.lon, coords.lat, coords.lon);
-                
-                // Frequency logic
-                const freqVal = parseFloat(generateRandomFreq(config.min, config.max, 3));
-                const freq = freqVal + ' ' + config.unit;
-                
-                newThreat = {
-                    id: Date.now() + Math.random(),
-                    category: 'RF',
-                    type: threatTypeKey,
-                    subType: config.type,
-                    frequency: freq,
-                    signalBand: config.band,
-                    powerLevel: `-${Math.floor(Math.random() * 50 + 40)} dBm`,
-                    distance: `${distance}m`,
-                    wavelength: calculateWavelength(freqVal, config.unit),
-                    coords: coords,
-                    timestamp: Date.now(),
-                    status: 'detecting'
+        defense.start();
+        const offThreat = defense.onThreat((ev) => {
+            if (paused) return;
+            // Animation line from origin to user
+            if (userLocation) {
+                const line = {
+                    id: ev.id,
+                    positions: generateInterPath([ev.coords.lat, ev.coords.lon], [userLocation.lat, userLocation.lon]),
+                    color: CATEGORY_COLOR[ev.category],
+                    type: 'attack' as const,
                 };
-                
-                playAlertSound('RF');
-
+                dispatch({ type: 'ADD_THREAT', payload: { threat: ev, line } });
+                // Clear the line after a short delay
+                setTimeout(() => dispatch({ type: 'CLEAR_LINE', payload: ev.id }), 4000);
             } else {
-                // Generate Cyber Threat from world
-                const countryName = COUNTRY_KEYS[Math.floor(Math.random() * COUNTRY_KEYS.length)];
-                const countryData = COUNTRIES[countryName];
-                const threatType = CYBER_THREATS[Math.floor(Math.random() * CYBER_THREATS.length)];
-                
-                const generateIP = (prefix: string) => `${prefix}.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}`;
-
-                newThreat = { 
-                    id: Date.now() + Math.random(), 
-                    category: 'CYBER',
-                    type: threatType, 
-                    sourceCountry: countryName, 
-                    coords: countryData, 
-                    ip: generateIP(countryData.ipPrefix), 
-                    timestamp: Date.now(), 
-                    status: 'detecting' 
-                };
-
-                if (userLocation) {
-                    line = { 
-                        id: newThreat.id, 
-                        positions: [[countryData.lat, countryData.lon], [userLocation.lat, userLocation.lon]], 
-                        color: '#ef4444',
-                        type: 'attack'
-                    };
-                }
-                playAlertSound('CYBER');
+                dispatch({ type: 'ADD_THREAT', payload: { threat: ev } });
             }
+        });
+        const offRules = defense.onRules(setRules);
+        const offAudit = defense.onAudit((entry) => setAuditEntries(prev => [...prev, entry].slice(-500)));
+        const offStats = defense.onStats(setStats);
+        const offFeed = defense.onFeed((feed) => setRecentFeed(feed.sources));
+        const histTimer = window.setInterval(() => dispatch({ type: 'TICK_HISTORY' }), 2000);
 
-            dispatch({ type: 'ADD_THREAT', payload: { threat: newThreat, line } });
+        return () => {
+            offThreat();
+            offRules();
+            offAudit();
+            offStats();
+            histTimer && clearInterval(histTimer);
+        };
+    }, [userLocation, paused]);
 
-            if (line) {
-                setTimeout(() => dispatch({ type: 'CLEAR_LINE', payload: newThreat.id }), 1000);
+    // Filtered view
+    const visibleThreats = useMemo(() => {
+        const q = search.trim().toLowerCase();
+        return threats.filter(t => {
+            if (filterCategory !== 'all' && t.category !== filterCategory) return false;
+            if (filterSeverity !== 'all' && t.severity !== filterSeverity) return false;
+            if (filterStatus === 'active' && (t.status === 'neutralized' || t.status === 'failed')) return false;
+            if (filterStatus === 'neutralized' && t.status !== 'neutralized') return false;
+            if (q) {
+                const hay = `${t.type} ${t.subType ?? ''} ${t.cyber?.sourceCountry ?? ''} ${t.cyber?.sourceIp ?? ''} ${t.cyber?.domain ?? ''}`.toLowerCase();
+                if (!hay.includes(q)) return false;
             }
+            return true;
+        });
+    }, [threats, filterCategory, filterSeverity, filterStatus, search]);
 
-            // --- AUTO-NEUTRALIZE SEQUENCE (The "Real" Defense) ---
-            setTimeout(() => {
-                dispatch({ type: 'UPDATE_STATUS', payload: { threatId: newThreat.id, status: 'locking' } });
-                playAlertSound('LOCK');
-                
-                // Defense animation
-                let neutralizeLine: AnimationLine | undefined;
-                if (userLocation) {
-                    neutralizeLine = { 
-                        id: newThreat.id + 10000, 
-                        positions: [[userLocation.lat, userLocation.lon], [newThreat.coords.lat, newThreat.coords.lon]], 
-                        color: newThreat.category === 'RF' ? '#a855f7' : '#22d3ee', // Purple for RF defense, Cyan for Cyber
-                        type: 'defense'
-                    };
-                    dispatch({ type: 'ADD_DEFENSE_LINE', payload: { line: neutralizeLine }});
-                }
+    const threatCounts = useMemo(() => {
+        const bySeverity: Record<ThreatSeverity, number> = { low: 0, medium: 0, high: 0, critical: 0 };
+        for (const t of visibleThreats) bySeverity[t.severity] += 1;
+        return bySeverity;
+    }, [visibleThreats]);
 
-                setTimeout(() => {
-                    const measures = newThreat.category === 'RF' ? COUNTER_MEASURES_RF : COUNTER_MEASURES_CYBER;
-                    const counterMeasure = measures[Math.floor(Math.random() * measures.length)];
-                    
-                    dispatch({ type: 'FINISH_NEUTRALIZE', payload: { threatId: newThreat.id, counterMeasure } });
-                    onNeutralize?.(newThreat.type);
-                    
-                    if (selectedThreat?.id === newThreat.id) {
-                        setSelectedThreat(t => t && ({...t, status: 'neutralized', counterMeasure}));
-                    }
-                }, 800);
+    const threatStats = useMemo(() => {
+        const map: Record<string, number> = {};
+        for (const t of visibleThreats) map[t.type] = (map[t.type] || 0) + 1;
+        return Object.entries(map).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count).slice(0, 8);
+    }, [visibleThreats]);
 
-            }, 1000);
-
-        }, 3500); // Scans every 3.5s
-
-        return () => clearInterval(interval);
-    }, [onNeutralize, userLocation, selectedThreat?.id]);
-
+    // Auto-neutralize toggle
     useEffect(() => {
-        const histInterval = setInterval(() => {
-            dispatch({ type: 'TICK_HISTORY', payload: null });
-        }, 2000);
-        return () => clearInterval(histInterval);
+        defense.setPaused(paused);
+    }, [paused]);
+
+    // Handlers
+    const handleNeutralize = useCallback((t: ThreatEvent) => {
+        defense.neutralize(t.id, 'block');
+        if (onNeutralize) onNeutralize(t.type);
+    }, [onNeutralize]);
+
+    const handleBlockDomain = useCallback((domain: string) => {
+        defense.blockDomain(domain);
     }, []);
 
-    const handleToggleFullscreen = () => {
-        if (!modalRef.current) return;
-        if (!document.fullscreenElement) {
-            modalRef.current.requestFullscreen().catch(err => console.error(err));
-        } else if (document.exitFullscreen) {
-            document.exitFullscreen();
-        }
-    };
-
-    useEffect(() => {
-        const handleFullscreenChange = () => setIsFullscreen(!!document.fullscreenElement);
-        document.addEventListener('fullscreenchange', handleFullscreenChange);
-        return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    const handleClear = useCallback(() => {
+        dispatch({ type: 'CLEAR' });
     }, []);
 
-    const activeThreats = useMemo(() => {
-        return threats.filter(t => t.status !== 'neutralized');
-    }, [threats]);
+    const handleToggleRule = useCallback((id: string) => {
+        defense.toggleRule(id);
+    }, []);
 
-    const chartData = useMemo(() => {
-        // Merge stats
-        const allStats = {...threatStats};
-        // Ensure keys exist for chart even if 0
-        [...CYBER_THREATS, ...RF_THREAT_KEYS].forEach(k => { if (!allStats[k]) allStats[k] = 0; });
-        return Object.entries(allStats)
-            .map(([name, count]) => ({ name, count }))
-            .sort((a,b) => (b.count as number) - (a.count as number))
-            .slice(0, 10);
-    }, [threatStats]);
-
-    const activeThreats = useMemo(() => threats.filter(t => t.status !== 'neutralized'), [threats]);
-
-    const statusDisplay: Record<ThreatStatus, React.ReactElement> = { 
-        detecting: <span className="text-amber-400">DETECTING</span>, 
-        locking: <span className="text-rose-400 animate-pulse">LOCKING</span>,
-        neutralizing: <span className="text-cyan-400 animate-pulse">JAMMING</span>, 
-        neutralized: <span className="text-slate-500">NEUTRALIZED</span> 
-    };
-
-    const activeThreats = useMemo(() => threats.filter(t => t.status !== 'neutralized'), [threats]);
+    const handleThreatClick = useCallback((t: ThreatEvent) => {
+        setSelectedThreat(t);
+        setMapCenter(t.coords);
+        setZoomToThreat(t.id);
+    }, []);
 
     return (
-        <div ref={modalRef} className="fixed inset-0 bg-slate-900/95 backdrop-blur-md flex flex-col z-50 animate-in fade-in duration-300 overflow-y-auto">
-            {/* Header */}
-            <div className="p-4 sm:p-6 pb-2 flex items-center justify-between flex-shrink-0 sticky top-0 bg-slate-900/90 z-20 backdrop-blur-md border-b border-white/5">
-                <div>
-                    <h2 className="text-xl font-bold text-cyan-400 flex items-center gap-2">
-                        <span className="relative flex h-3 w-3"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span><span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500"></span></span>
-                        GLOBAL THREAT INTELLIGENCE
-                    </h2>
-                    <p className="text-xs text-slate-500 uppercase tracking-widest mt-1">Real-time Spectrum Analysis & Active Defense</p>
+        <div className={`fixed inset-0 bg-slate-950/95 z-50 flex flex-col ${selectedThreat ? '' : ''}`}>
+            {/* ===== Header / Toolbar ===== */}
+            <div className="flex flex-wrap items-center justify-between gap-3 p-4 border-b border-white/10 glass">
+                <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-lg bg-rose-500/10 border border-rose-500/40 flex items-center justify-center">
+                        <svg className="w-5 h-5 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2h10a2 2 0 002-2v-1a2 2 0 012-2h1.945M7.7 17.3l.426 1.422a2 2 0 001.97 1.423h2.798a2 2 0 001.97-1.423l.426-1.422M6 11V3a3 3 0 013-3h6a3 3 0 013 3v8" />
+                        </svg>
+                    </div>
+                    <div>
+                        <h2 className="text-sm font-black uppercase tracking-widest text-slate-200">Live Threat Operations Center</h2>
+                        <p className="text-[10px] text-slate-500 uppercase tracking-tighter">{visibleThreats.length} visible · {stats.total} total · {stats.neutralized} neutralized</p>
+                    </div>
                 </div>
+
+                {/* Center filters */}
+                <div className="flex items-center gap-2 flex-1 justify-center">
+                    <div className="relative">
+                        <input
+                            type="text"
+                            placeholder="Search threats, IPs, countries…"
+                            value={search}
+                            onChange={(e) => setSearch(e.target.value)}
+                            className="bg-slate-900/50 border border-white/10 rounded-lg px-3 py-1.5 text-xs w-64 focus:outline-none focus:border-cyan-500/50"
+                        />
+                    </div>
+                    <div className="flex items-center glass rounded-lg p-0.5">
+                        <button onClick={() => setFilterCategory('all')}   className={`px-2 py-1 text-[10px] font-bold rounded ${filterCategory === 'all'   ? 'bg-slate-700 text-white' : 'text-slate-400'}`}>All</button>
+                        <button onClick={() => setFilterCategory('CYBER')} className={`px-2 py-1 text-[10px] font-bold rounded ${filterCategory === 'CYBER' ? 'bg-rose-500/20 text-rose-400' : 'text-slate-400'}`}>Cyber</button>
+                        <button onClick={() => setFilterCategory('RF')}    className={`px-2 py-1 text-[10px] font-bold rounded ${filterCategory === 'RF'    ? 'bg-purple-500/20 text-purple-400' : 'text-slate-400'}`}>RF</button>
+                    </div>
+                    <div className="flex items-center glass rounded-lg p-0.5">
+                        <button onClick={() => setFilterSeverity('all')}     className={`px-2 py-1 text-[10px] font-bold rounded ${filterSeverity === 'all'     ? 'bg-slate-700 text-white' : 'text-slate-400'}`}>Any</button>
+                        {SEVERITY_LIST.map(s => (
+                            <button key={s} onClick={() => setFilterSeverity(s)} className={`px-2 py-1 text-[10px] font-bold rounded uppercase ${filterSeverity === s ? 'text-white' : 'text-slate-400'}`} style={filterSeverity === s ? { background: SEVERITY_COLORS[s] } : {}}>
+                                {s}
+                            </button>
+                        ))}
+                    </div>
+                    <div className="flex items-center glass rounded-lg p-0.5">
+                        <button onClick={() => setFilterStatus('active')}      className={`px-2 py-1 text-[10px] font-bold rounded ${filterStatus === 'active'      ? 'bg-slate-700 text-white' : 'text-slate-400'}`}>Active</button>
+                        <button onClick={() => setFilterStatus('all')}         className={`px-2 py-1 text-[10px] font-bold rounded ${filterStatus === 'all'         ? 'bg-slate-700 text-white' : 'text-slate-400'}`}>All</button>
+                        <button onClick={() => setFilterStatus('neutralized')}className={`px-2 py-1 text-[10px] font-bold rounded ${filterStatus === 'neutralized'? 'bg-slate-700 text-white' : 'text-slate-400'}`}>Done</button>
+                    </div>
+                </div>
+
+                {/* Right controls */}
                 <div className="flex items-center gap-2">
-                    <button onClick={handleToggleFullscreen} className="p-2 text-slate-400 hover:text-white glass rounded transition-colors hidden sm:block">
-                        {isFullscreen ? <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 4H4v4m12 0V4h-4M8 20H4v-4m12 0v4h-4" /></svg> : <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4h4m12 4V4h-4M4 16v4h4m12-4v4h-4" /></svg>}
+                    <button onClick={() => setPaused(p => !p)} className={`px-3 py-1.5 text-[10px] font-bold uppercase rounded-lg border ${paused ? 'bg-amber-500/10 border-amber-500/40 text-amber-400' : 'bg-emerald-500/10 border-emerald-500/40 text-emerald-400'}`}>
+                        {paused ? '▶ Resume' : '⏸ Pause'}
                     </button>
-                    <button onClick={onClose} className="text-3xl text-slate-400 hover:text-white transition-colors leading-none">&times;</button>
+                    <button onClick={() => setShowRules(s => !s)} className={`px-3 py-1.5 text-[10px] font-bold uppercase rounded-lg border ${showRules ? 'bg-cyan-500/10 border-cyan-500/40 text-cyan-400' : 'border-white/10 text-slate-400'}`}>
+                        Rules ({rules.filter(r => r.enabled).length})
+                    </button>
+                    <button onClick={() => setShowFeed(f => !f)} className={`px-3 py-1.5 text-[10px] font-bold uppercase rounded-lg border ${showFeed ? 'bg-cyan-500/10 border-cyan-500/40 text-cyan-400' : 'border-white/10 text-slate-400'}`}>
+                        Feed
+                    </button>
+                    <button onClick={() => setShowAudit(a => !a)} className={`px-3 py-1.5 text-[10px] font-bold uppercase rounded-lg border ${showAudit ? 'bg-cyan-500/10 border-cyan-500/40 text-cyan-400' : 'border-white/10 text-slate-400'}`}>
+                        Audit
+                    </button>
+                    <button onClick={handleClear} className="px-3 py-1.5 text-[10px] font-bold uppercase rounded-lg border border-white/10 text-slate-400 hover:text-rose-400">
+                        Clear
+                    </button>
+                    <button onClick={onClose} className="px-3 py-1.5 text-[10px] font-bold uppercase rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700">
+                        ✕ Close
+                    </button>
                 </div>
             </div>
 
-            {/* Main Content Area */}
-            <div className="flex-1 flex flex-col p-4 sm:p-6 gap-6 h-full">
-                
-                {/* TOP: Map */}
-                <div className="h-[50vh] sm:h-[60vh] glass rounded-2xl p-0 relative overflow-hidden border-0 flex-shrink-0">
-                    <MapContainer center={[20, 30]} zoom={2} style={{ height: '100%', width: '100%' }} scrollWheelZoom={true} className="map-container bg-[#020617]">
-                        <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'/>
-                        <RecenterMap center={userLocation} />
-                        {userLocation && (
-                            <>
-                                <Marker position={[userLocation.lat, userLocation.lon]} icon={userIcon} />
-                                <CircleMarker center={[userLocation.lat, userLocation.lon]} radius={50} pathOptions={{ color: '#a855f7', weight: 1, fillOpacity: 0.05, dashArray: '5, 10' }}>
-                                </CircleMarker>
-                            </>
-                        )}
-                        {activeThreats.map(threat => (
-                             threat.category === 'RF' ? (
-                                <Marker 
-                                    key={threat.id} 
-                                    position={[threat.coords.lat, threat.coords.lon]} 
-                                    icon={rfIcon}
-                                    eventHandlers={{ click: () => setSelectedThreat(threat) }}
-                                />
-                             ) : (
-                                <CircleMarker 
-                                    key={threat.id} 
-                                    center={[threat.coords.lat, threat.coords.lon]} 
-                                    radius={4} 
-                                    pathOptions={{ color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.8 }} 
-                                    eventHandlers={{ click: () => setSelectedThreat(threat) }}
-                                />
-                             )
+            {/* ===== Body ===== */}
+            <div className="flex-1 flex overflow-hidden">
+                {/* Map */}
+                <div className="flex-1 relative">
+                    <MapContainer
+                        center={[userLocation?.lat ?? 30, userLocation?.lon ?? 0]}
+                        zoom={2}
+                        minZoom={2}
+                        maxZoom={12}
+                        scrollWheelZoom
+                        className="w-full h-full"
+                        worldCopyJump
+                    >
+                        <TileLayer
+                            url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+                            attribution='&copy; OpenStreetMap &copy; CARTO'
+                        />
+                        {userLocation && <Marker position={[userLocation.lat, userLocation.lon]} icon={userIcon} />}
+                        <RecenterMap center={mapCenter} />
+                        {activeLines.map(line => (
+                            <Polyline key={line.id} positions={line.positions} pathOptions={{ color: line.color, weight: 1.5, opacity: 0.6, dashArray: '4,6' }} />
                         ))}
-                        {activeLines.map(line => <Polyline key={line.id} positions={line.positions as any} color={line.color} weight={line.type === 'attack' ? 1.5 : 2.5} opacity={line.type === 'attack' ? 0.6 : 0.9} dashArray={line.type === 'attack' ? undefined : '5, 10'} />)}
+                        {visibleThreats.map(threat => (
+                            <React.Fragment key={threat.id}>
+                                <CircleMarker
+                                    center={[threat.coords.lat, threat.coords.lon]}
+                                    radius={threat.severity === 'critical' ? 18 : threat.severity === 'high' ? 14 : 10}
+                                    pathOptions={{
+                                        color: SEVERITY_COLORS[threat.severity],
+                                        fillColor: SEVERITY_COLORS[threat.severity],
+                                        fillOpacity: 0.15,
+                                        weight: 1.5,
+                                    }}
+                                    eventHandlers={{ click: () => handleThreatClick(threat) }}
+                                />
+                                <Marker
+                                    position={[threat.coords.lat, threat.coords.lon]}
+                                    icon={threatIcon(threat.severity, threat.status)}
+                                    eventHandlers={{ click: () => handleThreatClick(threat) }}
+                                />
+                            </React.Fragment>
+                        ))}
                     </MapContainer>
-                    <div className="absolute bottom-4 left-4 pointer-events-none">
-                        <div className="glass px-3 py-1 rounded text-[10px] font-mono text-cyan-400 border-cyan-500/30">
-                            LIVE FEED ACTIVE • <span className="text-white">SCANNING...</span>
-                        </div>
-                    </div>
-                    {selectedThreat && <ThreatDossier threat={selectedThreat} onClose={() => setSelectedThreat(null)} />}
-                </div>
 
-                {/* BOTTOM: Detailed Analytics & Logs */}
-                <div className="flex flex-col lg:flex-row gap-6 h-[400px] lg:h-[350px]">
-                    
-                    {/* Left: Detailed Log (Scrollable) */}
-                    <div className="flex-[2] glass rounded-2xl p-0 flex flex-col min-h-0 overflow-hidden">
-                        <div className="p-4 border-b border-white/5 bg-slate-900/30 backdrop-blur flex justify-between items-center">
-                            <h3 className="text-sm font-bold text-slate-300">Detailed Threat Log</h3>
-                            <span className="text-[10px] text-slate-500 uppercase">Real-time Data</span>
+                    {/* Stats overlay (top-left) */}
+                    <div className="absolute top-4 left-4 glass rounded-2xl p-4 w-72 pointer-events-none z-[400]">
+                        <div className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-2">Defense Status</div>
+                        <div className="grid grid-cols-2 gap-2 mb-3">
+                            <Stat label="Total"      value={stats.total} color="text-slate-200" />
+                            <Stat label="Neutralized"value={stats.neutralized} color="text-emerald-400" />
+                            <Stat label="Rate/min"   value={stats.recentRate} color="text-amber-400" />
+                            <Stat label="Uptime"     value={formatUptime(stats.uptimeMs)} color="text-cyan-400" />
                         </div>
-                        <div className="flex-1 overflow-y-auto scrollbar-hide">
-                            <table className="w-full text-left text-xs border-collapse">
-                                <thead className="bg-slate-900/50 text-slate-500 sticky top-0 z-10 backdrop-blur-md">
-                                    <tr>
-                                        <th className="p-3 font-bold uppercase tracking-wider text-[10px]">Time</th>
-                                        <th className="p-3 font-bold uppercase tracking-wider text-[10px]">Type</th>
-                                        <th className="p-3 font-bold uppercase tracking-wider text-[10px]">Origin / Freq</th>
-                                        <th className="p-3 font-bold uppercase tracking-wider text-[10px]">Status</th>
-                                        <th className="p-3 font-bold uppercase tracking-wider text-[10px] text-right">Action</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-white/5">
-                                    {threats.map(threat => (
-                                        <tr key={threat.id} onClick={() => setSelectedThreat(threat)} className="hover:bg-white/5 cursor-pointer transition-colors group">
-                                            <td className="p-3 font-mono text-slate-400 whitespace-nowrap">{new Date(threat.timestamp).toLocaleTimeString()}</td>
-                                            <td className="p-3">
-                                                <span className={`font-bold ${threat.category === 'RF' ? 'text-purple-400' : 'text-rose-400'}`}>{threat.type}</span>
-                                            </td>
-                                            <td className="p-3 text-slate-300 font-mono">
-                                                {threat.category === 'RF' ? threat.frequency : threat.sourceCountry}
-                                            </td>
-                                            <td className="p-3">
-                                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${threat.status === 'neutralized' ? 'bg-emerald-900/30 text-emerald-400' : 'bg-amber-900/30 text-amber-400'}`}>
-                                                    {threat.status.toUpperCase()}
-                                                </span>
-                                            </td>
-                                            <td className="p-3 text-right">
-                                                {threat.counterMeasure ? (
-                                                    <span className="text-[9px] text-cyan-400 font-mono flex items-center justify-end gap-1">
-                                                        <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse"></span>
-                                                        PAYLOAD SENT
-                                                    </span>
-                                                ) : <span className="text-[10px] text-slate-600">-</span>}
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
+                        <div className="space-y-1.5">
+                            {SEVERITY_LIST.map(s => (
+                                <div key={s} className="flex items-center gap-2 text-[10px]">
+                                    <span className="w-2 h-2 rounded-full" style={{ background: SEVERITY_COLORS[s] }}></span>
+                                    <span className="uppercase font-bold text-slate-300 w-16">{s}</span>
+                                    <div className="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                                        <div className="h-full transition-all" style={{ width: `${Math.min(100, threatCounts[s] * 12)}%`, background: SEVERITY_COLORS[s] }}></div>
+                                    </div>
+                                    <span className="mono text-slate-400 w-8 text-right">{threatCounts[s]}</span>
+                                </div>
+                            ))}
                         </div>
-                    </div>
-
-                    {/* Right: Graphs */}
-                    <div className="flex-1 flex flex-col gap-4 min-h-0">
-                        {/* Line Chart: Intensity History */}
-                        <div className="flex-1 glass rounded-2xl p-4 flex flex-col min-h-0">
-                            <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Threat Intensity (Time)</h3>
-                            <div className="flex-1 w-full min-h-0">
+                        <div className="mt-3 pt-3 border-t border-white/10">
+                            <div className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1">Intensity (last 40s)</div>
+                            <div className="h-10">
                                 <ResponsiveContainer width="100%" height="100%">
                                     <LineChart data={intensityHistory}>
-                                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                                        <XAxis dataKey="time" hide />
-                                        <YAxis hide domain={[0, 'auto']} />
-                                        <Tooltip 
-                                            contentStyle={{ backgroundColor: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', fontSize: '12px' }}
-                                            itemStyle={{ color: '#22d3ee' }}
-                                        />
-                                        <Line type="monotone" dataKey="count" stroke="#22d3ee" strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
+                                        <Line type="monotone" dataKey="count" stroke="#22d3ee" strokeWidth={1.5} dot={false} isAnimationActive={false} />
                                     </LineChart>
                                 </ResponsiveContainer>
                             </div>
                         </div>
+                    </div>
 
-                        {/* Bar Chart: Spectrum */}
-                        <div className="flex-1 glass rounded-2xl p-4 flex flex-col min-h-0">
-                            <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Threat Spectrum</h3>
-                            <div className="flex-1 w-full min-h-0">
+                    {/* Threat feed (bottom-left) */}
+                    {showFeed && (
+                        <div className="absolute bottom-4 left-4 glass rounded-2xl p-3 w-80 max-h-64 overflow-y-auto z-[400]">
+                            <div className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-2">Live Threat Feed</div>
+                            <div className="space-y-1.5">
+                                {visibleThreats.slice(0, 12).map(t => (
+                                    <button key={t.id} onClick={() => handleThreatClick(t)} className="w-full text-left flex items-center gap-2 p-1.5 rounded hover:bg-white/5 transition-colors">
+                                        <span className="w-1.5 h-1.5 rounded-full" style={{ background: SEVERITY_COLORS[t.severity] }}></span>
+                                        <span className="text-[11px] font-semibold text-slate-200 truncate flex-1">{t.type}{t.subType ? ` · ${t.subType}` : ''}</span>
+                                        <span className="text-[9px] mono text-slate-500 uppercase">{t.status === 'neutralized' ? '✓' : t.status === 'detecting' ? '◌' : t.status === 'locking' ? '⌖' : '⚡'}</span>
+                                    </button>
+                                ))}
+                                {visibleThreats.length === 0 && <div className="text-[10px] text-slate-500 italic text-center py-4">No threats match the current filters.</div>}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Discovery feed (top-right) */}
+                    <div className="absolute top-4 right-4 glass rounded-2xl p-3 w-72 z-[400]">
+                        <div className="flex items-center justify-between mb-2">
+                            <div className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Adversary ASN Watch</div>
+                            <div className="text-[9px] mono text-slate-500">{recentFeed.length} sources</div>
+                        </div>
+                        <div className="space-y-1.5 max-h-44 overflow-y-auto pr-1">
+                            {recentFeed.slice(0, 8).map(src => (
+                                <div key={src.asn} className="flex items-center gap-2 text-[10px]">
+                                    <span className="font-mono text-slate-500 w-16">{src.asn}</span>
+                                    <span className="text-slate-300 flex-1 truncate">{src.name}</span>
+                                    <span className="mono text-slate-400">{src.events}</span>
+                                    <div className="w-12 h-1 bg-slate-800 rounded-full overflow-hidden">
+                                        <div className="h-full bg-rose-500" style={{ width: `${src.reputation * 100}%` }}></div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Type breakdown (bottom-right) */}
+                    {threatStats.length > 0 && (
+                        <div className="absolute bottom-4 right-4 glass rounded-2xl p-3 w-72 z-[400]">
+                            <div className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-2">Top Threat Types</div>
+                            <div className="h-32">
                                 <ResponsiveContainer width="100%" height="100%">
-                                    <BarChart data={chartData} layout="vertical" margin={{ top: 0, right: 30, left: 0, bottom: 0 }}>
+                                    <BarChart data={threatStats} layout="vertical" margin={{ top: 0, right: 12, left: 0, bottom: 0 }}>
                                         <XAxis type="number" hide />
-                                        <YAxis type="category" dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 9 }} width={70} />
-                                        <Bar dataKey="count" fill="#3b82f6" background={{ fill: 'rgba(255,255,255,0.05)' }} barSize={6} radius={[0, 4, 4, 0]}>
-                                            {
-                                                chartData.map((entry, index) => (
-                                                    <Cell key={`cell-${index}`} fill={RF_THREAT_KEYS.includes(entry.name) ? '#a855f7' : '#ef4444'} />
-                                                ))
-                                            }
-                                            <LabelList dataKey="count" position="right" fill="#94a3b8" fontSize={9} />
+                                        <YAxis dataKey="name" type="category" tick={{ fill: '#94a3b8', fontSize: 10 }} width={90} />
+                                        <Tooltip
+                                            contentStyle={{ background: 'rgba(15,23,42,0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 11 }}
+                                            cursor={{ fill: 'rgba(34,211,238,0.1)' }}
+                                        />
+                                        <Bar dataKey="count" radius={[0, 4, 4, 0]}>
+                                            {threatStats.map((entry, idx) => (
+                                                <Cell key={idx} fill="#22d3ee" />
+                                            ))}
+                                            <LabelList dataKey="count" position="right" fill="#cbd5e1" fontSize={10} />
                                         </Bar>
                                     </BarChart>
                                 </ResponsiveContainer>
                             </div>
                         </div>
-                    </div>
+                    )}
+                </div>
 
+                {/* Right side panel */}
+                {showRules && (
+                    <RulesPanel rules={rules} onToggle={handleToggleRule} onClose={() => setShowRules(false)} />
+                )}
+                {showAudit && (
+                    <AuditPanel entries={auditEntries} onClose={() => setShowAudit(false)} />
+                )}
+                {selectedThreat && (
+                    <ThreatDossier
+                        threat={selectedThreat}
+                        onClose={() => setSelectedThreat(null)}
+                        onNeutralize={() => { handleNeutralize(selectedThreat); setSelectedThreat({ ...selectedThreat, status: 'neutralizing' }); }}
+                        onBlockDomain={(d) => handleBlockDomain(d)}
+                    />
+                )}
+            </div>
+        </div>
+    );
+};
+
+// =============================================================================
+//  SUB-COMPONENTS
+// =============================================================================
+
+const Stat: React.FC<{ label: string; value: any; color: string }> = ({ label, value, color }) => (
+    <div className="bg-slate-900/50 rounded-lg p-2 border border-white/5">
+        <div className="text-[9px] uppercase font-bold text-slate-500 tracking-wider">{label}</div>
+        <div className={`text-sm font-black mono ${color}`}>{value}</div>
+    </div>
+);
+
+const formatUptime = (ms: number): string => {
+    const s = Math.floor(ms / 1000);
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60);
+    if (m < 60) return `${m}m`;
+    const h = Math.floor(m / 60);
+    return `${h}h${m % 60}m`;
+};
+
+// =============================================================================
+//  RULES PANEL
+// =============================================================================
+
+const RulesPanel: React.FC<{ rules: DefenseRule[]; onToggle: (id: string) => void; onClose: () => void }> = ({ rules, onToggle, onClose }) => {
+    const grouped = useMemo(() => {
+        const sys = rules.filter(r => r.source === 'system');
+        const usr = rules.filter(r => r.source === 'user');
+        return { sys, usr };
+    }, [rules]);
+
+    return (
+        <div className="w-96 border-l border-white/10 glass flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-white/10">
+                <div>
+                    <h3 className="font-bold uppercase text-sm text-cyan-400 tracking-wider">Defense Rules</h3>
+                    <p className="text-[10px] text-slate-500 mt-0.5">Continuous policy engine</p>
+                </div>
+                <button onClick={onClose} className="text-slate-400 hover:text-white text-xl">&times;</button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-3 space-y-4">
+                <div>
+                    <div className="text-[10px] uppercase font-bold text-slate-500 mb-2">System Rules</div>
+                    <div className="space-y-1.5">
+                        {grouped.sys.map(r => <RuleRow key={r.id} rule={r} onToggle={onToggle} />)}
+                    </div>
+                </div>
+                {grouped.usr.length > 0 && (
+                    <div>
+                        <div className="text-[10px] uppercase font-bold text-slate-500 mb-2">User Rules</div>
+                        <div className="space-y-1.5">
+                            {grouped.usr.map(r => <RuleRow key={r.id} rule={r} onToggle={onToggle} />)}
+                        </div>
+                    </div>
+                )}
+                <button
+                    onClick={() => defense.resetRules()}
+                    className="w-full mt-2 py-2 text-[10px] uppercase font-bold rounded-lg border border-white/10 text-slate-400 hover:bg-slate-800"
+                >
+                    ↻ Reset to Defaults
+                </button>
+            </div>
+        </div>
+    );
+};
+
+const RuleRow: React.FC<{ rule: DefenseRule; onToggle: (id: string) => void }> = ({ rule, onToggle }) => {
+    return (
+        <div className={`p-2.5 rounded-lg border transition-all ${rule.enabled ? 'border-cyan-500/30 bg-cyan-500/5' : 'border-white/5 bg-slate-900/40 opacity-60'}`}>
+            <div className="flex items-start justify-between gap-2">
+                <div className="flex-1 min-w-0">
+                    <div className="text-[12px] font-bold text-slate-200 truncate">{rule.name}</div>
+                    <div className="flex items-center gap-1 mt-1 flex-wrap">
+                        <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded" style={{ background: `${CATEGORY_COLOR[rule.category as 'CYBER' | 'RF'] || '#64748b'}30`, color: CATEGORY_COLOR[rule.category as 'CYBER' | 'RF'] || '#94a3b8' }}>{rule.category}</span>
+                        <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded" style={{ background: `${SEVERITY_COLORS[rule.severity]}30`, color: SEVERITY_COLORS[rule.severity] }}>{rule.severity}+</span>
+                        <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded" style={{ background: `${ACTION_COLOR[rule.action]}30`, color: ACTION_COLOR[rule.action] }}>{ACTION_LABELS[rule.action]}</span>
+                    </div>
+                </div>
+                <button
+                    onClick={() => onToggle(rule.id)}
+                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${rule.enabled ? 'bg-cyan-500' : 'bg-slate-700'}`}
+                >
+                    <span className={`${rule.enabled ? 'translate-x-5' : 'translate-x-1'} inline-block h-3 w-3 transform rounded-full bg-white transition-transform`} />
+                </button>
+            </div>
+        </div>
+    );
+};
+
+// =============================================================================
+//  AUDIT PANEL
+// =============================================================================
+
+const AuditPanel: React.FC<{ entries: AuditEntry[]; onClose: () => void }> = ({ entries, onClose }) => {
+    const reversed = useMemo(() => [...entries].reverse().slice(0, 200), [entries]);
+    return (
+        <div className="w-96 border-l border-white/10 glass flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-white/10">
+                <div>
+                    <h3 className="font-bold uppercase text-sm text-cyan-400 tracking-wider">Audit Log</h3>
+                    <p className="text-[10px] text-slate-500 mt-0.5">{entries.length} entries</p>
+                </div>
+                <button onClick={onClose} className="text-slate-400 hover:text-white text-xl">&times;</button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-3 space-y-1 mono text-[10px]">
+                {reversed.map(e => (
+                    <div key={e.id} className="flex items-start gap-2 p-1.5 rounded hover:bg-white/5">
+                        <span className="text-slate-500 shrink-0">{new Date(e.timestamp).toLocaleTimeString()}</span>
+                        <span className={`shrink-0 uppercase font-bold ${e.actor === 'user' ? 'text-cyan-400' : e.actor === 'auto' ? 'text-emerald-400' : 'text-amber-400'}`}>{e.actor}</span>
+                        <span className="text-slate-300 flex-1 break-all">{e.event}: {e.details}</span>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+};
+
+// =============================================================================
+//  THREAT DOSSIER
+// =============================================================================
+
+const ThreatDossier: React.FC<{
+    threat: ThreatEvent;
+    onClose: () => void;
+    onNeutralize: () => void;
+    onBlockDomain: (domain: string) => void;
+}> = ({ threat, onClose, onNeutralize, onBlockDomain }) => {
+    return (
+        <div className="w-96 border-l border-white/10 glass flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-white/10">
+                <div>
+                    <h3 className="font-bold uppercase text-sm tracking-wider" style={{ color: CATEGORY_COLOR[threat.category] }}>
+                        {threat.category === 'RF' ? 'Signal Intercept' : 'Cyber Threat'}
+                    </h3>
+                    <p className="text-[10px] text-slate-500 mt-0.5 mono">ID #{threat.id}</p>
+                </div>
+                <button onClick={onClose} className="text-slate-400 hover:text-white text-xl">&times;</button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                {/* Header */}
+                <div className="p-3 rounded-lg border" style={{ background: `${SEVERITY_COLORS[threat.severity]}15`, borderColor: `${SEVERITY_COLORS[threat.severity]}50` }}>
+                    <div className="text-[9px] uppercase font-bold text-slate-500 mb-1">Signature</div>
+                    <div className="font-black text-slate-100 text-lg leading-tight">{threat.type}</div>
+                    {threat.subType && <div className="text-xs text-slate-300 mt-1">{threat.subType}</div>}
+                    <div className="flex items-center gap-2 mt-2">
+                        <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded" style={{ background: SEVERITY_COLORS[threat.severity], color: '#020617' }}>{threat.severity}</span>
+                        <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded" style={{ background: CATEGORY_COLOR[threat.category], color: '#020617' }}>{threat.category}</span>
+                        <span className="text-[9px] uppercase font-bold text-slate-400 mono">{threat.status}</span>
+                    </div>
+                </div>
+
+                {/* Cyber info */}
+                {threat.category === 'CYBER' && threat.cyber && (
+                    <div className="space-y-1.5">
+                        <KV label="Source IP"      value={threat.cyber.sourceIp} mono />
+                        <KV label="Source Country" value={threat.cyber.sourceCountry} />
+                        <KV label="ASN"            value={`${threat.cyber.asn} — ${threat.cyber.asnName}`} />
+                        <KV label="Domain"         value={threat.cyber.domain} mono />
+                        <KV label="Protocol"       value={threat.cyber.protocol} />
+                        <KV label="Dest Port"      value={String(threat.cyber.destinationPort)} mono />
+                    </div>
+                )}
+
+                {/* RF info */}
+                {threat.category === 'RF' && threat.signal && (
+                    <div className="space-y-1.5">
+                        <KV label="Frequency" value={threat.signal.frequency} mono />
+                        <KV label="Power"     value={threat.signal.powerDbm} mono />
+                        <KV label="Distance"  value={threat.signal.distance} mono />
+                        <div className="mt-2">
+                            <div className="text-[9px] uppercase font-bold text-slate-500 mb-1">Waveform</div>
+                            <div className="h-12 flex items-end gap-0.5">
+                                {Array.from({ length: 24 }, (_, i) => (
+                                    <div key={i} className="flex-1 rounded-sm" style={{
+                                        height: `${20 + Math.random() * 80}%`,
+                                        background: SEVERITY_COLORS[threat.severity],
+                                        opacity: 0.6,
+                                    }}></div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Response plan */}
+                {threat.responsePlan && (
+                    <div className="p-2 rounded border bg-slate-900/40 border-white/5">
+                        <div className="text-[9px] uppercase font-bold text-slate-500 mb-1">Response Plan</div>
+                        <div className="flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full" style={{ background: ACTION_COLOR[threat.responsePlan] }}></span>
+                            <span className="text-xs font-bold text-slate-200">{ACTION_LABELS[threat.responsePlan]}</span>
+                        </div>
+                    </div>
+                )}
+
+                {/* Status / actions */}
+                <div className="pt-2 border-t border-white/10 space-y-2">
+                    {threat.status === 'neutralized' ? (
+                        <div className="p-3 bg-emerald-900/20 border border-emerald-500/30 rounded text-emerald-400 text-xs">
+                            <div className="font-bold mb-1">✓ THREAT NEUTRALIZED</div>
+                            {threat.counterMeasure && <div className="font-mono text-[10px] opacity-80">{threat.counterMeasure}</div>}
+                        </div>
+                    ) : (
+                        <button
+                            onClick={onNeutralize}
+                            className="w-full py-2.5 bg-rose-500/10 border border-rose-500/40 text-rose-400 font-bold uppercase text-xs rounded-lg hover:bg-rose-500/20 transition-colors"
+                        >
+                            ⚡ Engage Countermeasure
+                        </button>
+                    )}
+                    {threat.cyber?.domain && (
+                        <button
+                            onClick={() => onBlockDomain(threat.cyber!.domain)}
+                            className="w-full py-2 bg-amber-500/10 border border-amber-500/30 text-amber-400 font-bold uppercase text-[10px] rounded-lg hover:bg-amber-500/20 transition-colors"
+                        >
+                            ⊘ Block domain {threat.cyber.domain}
+                        </button>
+                    )}
                 </div>
             </div>
         </div>
     );
 };
+
+const KV: React.FC<{ label: string; value: string; mono?: boolean }> = ({ label, value, mono }) => (
+    <div className="flex items-center justify-between gap-2 p-2 rounded bg-slate-900/40 border border-white/5">
+        <span className="text-[9px] uppercase font-bold text-slate-500 shrink-0">{label}</span>
+        <span className={`text-xs text-slate-200 truncate ${mono ? 'mono' : ''}`} title={value}>{value}</span>
+    </div>
+);
+
+// =============================================================================
+//  LEGACY EXPORTS (kept for back-compat with existing tests/types)
+// =============================================================================
+
+// Re-export the legacy Threat/AnimationLine types to satisfy any external imports
+export type { ThreatEvent as Threat, ThreatCategory };
+export type AnimationLine = { id: number; positions: [number, number][]; color: string; type: 'attack' | 'defense' };

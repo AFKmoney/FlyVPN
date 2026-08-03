@@ -116,3 +116,16 @@ export const countryToFlag = (countryName: string): string => {
 
     return '🏳️';
 };
+
+/**
+ * Convert a 2-letter ISO country code into its flag emoji.
+ * e.g. "US" -> "🇺🇸"
+ */
+export const getFlagEmoji = (countryCode: string): string => {
+    if (!countryCode || countryCode.length !== 2) return '🏳️';
+    const codePoints = countryCode
+        .toUpperCase()
+        .split('')
+        .map(char => 127397 + char.charCodeAt(0));
+    return String.fromCodePoint(...codePoints);
+};

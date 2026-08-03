@@ -1,4 +1,4 @@
-import { saveProgression } from '../services/geminiService';
+import { saveProgression } from '../services/persistenceService';
 
 // Mock localStorage
 const localStorageMock = (() => {

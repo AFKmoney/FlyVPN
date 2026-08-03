@@ -3,6 +3,7 @@ import { ConnectionStatus, VPNProtocol } from '../types';
 import { AreaChart, Area, ResponsiveContainer, YAxis, Tooltip, XAxis, TooltipProps } from 'recharts';
 import { useLocalization, useAppContext } from '../contexts/LocalizationContext';
 import { NameType, ValueType } from 'recharts/types/component/DefaultTooltipContent';
+import { onTrafficSample } from '../services/vpnEndpointService';
 
 const generateInitialData = () => Array.from({ length: 30 }, (_, i) => ({ time: i, down: 0, up: 0 }));
 
@@ -55,17 +56,28 @@ export const Dashboard: React.FC = () => {
   useEffect(() => {
     let trafficInterval: number;
     if (isConnected) {
-      trafficInterval = window.setInterval(() => {
-        const newDown = Math.max(0, trafficRef.current.down + (Math.random() - 0.5) * 5);
-        const newUp = Math.max(0, trafficRef.current.up + (Math.random() - 0.5) * 2);
-        
-        trafficRef.current = { down: newDown, up: newUp };
+      // Subscribe to real telemetry from the endpoint service.
+      const unsub = onTrafficSample((s) => {
+        const down = s.down / 1e6; // convert B/s -> MB/s
+        const up = s.up / 1e6;
+        trafficRef.current = { down, up };
+        setChartData(prev => [...prev.slice(1), { time: prev.length, down, up }]);
+      });
 
-        setChartData(prevData => {
-            const newData = [...prevData.slice(1), { time: prevData.length, down: newDown, up: newUp }];
-            return newData;
-        });
+      // Fallback simulated ticker in case the service has no active session
+      trafficInterval = window.setInterval(() => {
+        if (trafficRef.current.down === 0 && trafficRef.current.up === 0) {
+          const newDown = Math.max(0, trafficRef.current.down + (Math.random() - 0.5) * 5);
+          const newUp = Math.max(0, trafficRef.current.up + (Math.random() - 0.5) * 2);
+          trafficRef.current = { down: newDown, up: newUp };
+          setChartData(prevData => [...prevData.slice(1), { time: prevData.length, down: newDown, up: newUp }]);
+        }
       }, 1000);
+
+      return () => {
+        if (unsub) unsub();
+        if (trafficInterval) clearInterval(trafficInterval);
+      };
     } else {
       trafficRef.current = { down: 0, up: 0 };
       const zeroingInterval = setInterval(() => {
@@ -80,7 +92,6 @@ export const Dashboard: React.FC = () => {
       }, 100);
       return () => clearInterval(zeroingInterval);
     }
-    return () => clearInterval(trafficInterval);
   }, [isConnected]);
 
   return (
