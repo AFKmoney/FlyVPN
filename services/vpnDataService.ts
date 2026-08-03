@@ -72,10 +72,13 @@ const fetchOpenGateServers = async (): Promise<Server[]> => {
                 const load = Math.min(99, Math.round((sessions / (speed / 1000000)) * 2));
 
                 if (ip && country) {
-                     servers.push({
+                    // Extract 2-letter country code from OpenGate (e.g. "Japan (JP)" -> "JP")
+                    const codeMatch = country.match(/\(([A-Z]{2})\)\s*$/);
+                    const countryCode = codeMatch ? codeMatch[1] : undefined;
+                    servers.push({
                         id: `og-${ip}`,
                         ip,
-                        country,
+                        country: country.replace(/\s*\([A-Z]{2}\)\s*$/, '').trim(),
                         city: country, // OpenGate doesn't provide city-level data
                         latency,
                         load: isNaN(load) ? 50 : load,

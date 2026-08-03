@@ -6,7 +6,7 @@ import { ControlPanel } from './components/ControlPanel';
 import { DeviceManager } from './components/DeviceManager';
 import { ConnectionStatus } from './types';
 import { SERVERS } from './constants';
-import { findFastestServer } from './services/routingService';
+import { findFastestServer } from './lib/serverUtils';
 import { useLocalization } from './contexts/LocalizationContext';
 import { useAppContext } from './contexts/LocalizationContext';
 import { RealtimeThreatMap } from './components/intel/RealtimeThreatMap';
@@ -15,7 +15,6 @@ import { ConnectionLogManager } from './components/intel/ConnectionLogManager';
 import { BlankSlateAGI } from './components/intel/BlankSlateAGI';
 import { ProfileView } from './components/ProfileView';
 import { Toast, ToastData } from './components/ui/Toast';
-import { findFastestServer } from './lib/serverUtils';
 
 type View = 'dashboard' | 'servers' | 'settings' | 'devices';
 export type IntelView = 'threatMap' | 'packetVisualizer' | 'logManager' | 'warrantCanary' | 'blankSlate';
@@ -30,43 +29,53 @@ const App: React.FC = () => {
     neutralizeThreat, logs, clearLogs, updateConfig, selectServer
   } = useAppContext();
 
-  // Auto-routing logic remains an effect within App
+  // Auto-routing based on live RTT from vpnEndpointService
   useEffect(() => {
     let intervalId: number | undefined;
     if (config.adaptiveRouting && status === ConnectionStatus.CONNECTED) {
-      intervalId = window.setInterval(() => {
-        // This logic could also be in a service, but is fine here for now
-        const fastestServer = SERVERS.length > 0 ? SERVERS.reduce((prev, curr) =>
-          (curr.latency ?? Infinity) < (prev.latency ?? Infinity) ? curr : prev
-        ) : undefined;
-
-        if (fastestServer && fastestServer.id !== currentServer.id) {
-            selectServer(fastestServer, true);
-        }
-      }, 30000);
+      const tick = async () => {
+        try {
+          const { discoverEndpoints } = await import('./services/vpnEndpointService');
+          const endpoints = await discoverEndpoints();
+          if (endpoints.length === 0) return;
+          // Find the lowest-RTT endpoint in the same city as current
+          const candidates = endpoints.filter(ep => ep.city === currentServer.city || ep.country === currentServer.country);
+          const pool = candidates.length > 0 ? candidates : endpoints;
+          const fastest = pool.reduce((best, cur) => (cur.rttMs < best.rttMs ? cur : best));
+          if (fastest && fastest.city !== currentServer.city) {
+            // Map back to a Server in SERVERS
+            const target = SERVERS.find(s => s.city === fastest.city && s.country === fastest.country) ?? SERVERS[0];
+            if (target && target.id !== currentServer.id) selectServer(target, true);
+          }
+        } catch { /* ignore */ }
+      };
+      intervalId = window.setInterval(tick, 30000);
+      // Run once on activation
+      tick();
     }
     return () => { if (intervalId) clearInterval(intervalId); };
-  }, [config.adaptiveRouting, status, currentServer.id, selectServer]);
+  }, [config.adaptiveRouting, status, currentServer.id, currentServer.city, currentServer.country, selectServer]);
 
-  // Dynamic IP Rotation Logic
+  // Dynamic IP Rotation — real handshake via the endpoint service
   useEffect(() => {
     let rotationInterval: number | undefined;
     if (config.dynamicIPRotation && status === ConnectionStatus.CONNECTED) {
-      // Rotate IP every 90 seconds
-      rotationInterval = window.setInterval(() => {
-        const availableServers = SERVERS.filter(s => s.id !== currentServer.id);
-        if (availableServers.length > 0) {
-          const newServer = availableServers[Math.floor(Math.random() * availableServers.length)];
-          selectServer(newServer, true);
-        }
-      }, 90000); // 90 seconds
+      rotationInterval = window.setInterval(async () => {
+        try {
+          const { discoverEndpoints } = await import('./services/vpnEndpointService');
+          const endpoints = await discoverEndpoints();
+          const currentEndpoint = endpoints.find(ep => ep.city === currentServer.city);
+          // Pick a random different endpoint
+          const pool = endpoints.filter(ep => currentEndpoint ? ep.id !== currentEndpoint.id : true);
+          if (pool.length === 0) return;
+          const picked = pool[Math.floor(Math.random() * pool.length)];
+          const target = SERVERS.find(s => s.city === picked.city && s.country === picked.country) ?? SERVERS[0];
+          if (target && target.id !== currentServer.id) selectServer(target, true);
+        } catch { /* ignore */ }
+      }, 90000);
     }
-    return () => {
-      if (rotationInterval) {
-        clearInterval(rotationInterval);
-      }
-    };
-  }, [config.dynamicIPRotation, status, currentServer.id, selectServer]);
+    return () => { if (rotationInterval) clearInterval(rotationInterval); };
+  }, [config.dynamicIPRotation, status, currentServer.id, currentServer.city, selectServer]);
   
   const NavButton: React.FC<{view: View, label: string, icon: React.ReactElement}> = ({ view, label, icon }) => (
     <button onClick={() => setActiveView(view)} className={`flex flex-col sm:flex-row items-center gap-1 sm:gap-2 px-4 py-2 rounded-lg transition-colors text-xs font-bold ${activeView === view ? 'bg-cyan-500/10 text-cyan-400' : 'text-slate-400 hover:bg-slate-800'}`}>
