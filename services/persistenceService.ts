@@ -1,35 +1,21 @@
-import { Server, LogEntry } from '../types';
+/**
+ * persistenceService.ts
+ * --------------------------------------------------------------
+ * localStorage persistence for user progression, logs, and config.
+ * Renamed from the old "geminiService.ts" which was a misnomer
+ * (the file never used Gemini — it was a persistence layer).
+ */
+
+import { LogEntry } from '../types';
 import { UserStats } from '../lib/badges';
 
-// --- VPN Service ---
-export const connect = (server: Server): Promise<Server> => {
-    return new Promise(resolve => setTimeout(() => resolve(server), 2500));
-};
+// ---------------------------------------------------------------------------
+// Progression
+// ---------------------------------------------------------------------------
 
-export const disconnect = (): Promise<void> => {
-    return new Promise(resolve => setTimeout(resolve, 500));
-};
-
-export const switchServer = (server: Server): Promise<Server> => {
-    return new Promise(resolve => setTimeout(() => resolve(server), 1200));
-};
-
-// --- IP Service ---
-export const getRealIP = async (): Promise<string> => {
-    try {
-        const response = await fetch('https://api.ipify.org?format=json');
-        if (!response.ok) throw new Error('Network response was not ok');
-        const data = await response.json();
-        return data.ip;
-    } catch (error) {
-        console.warn("Failed to fetch real IP, falling back to simulation.", error);
-        return new Promise(resolve => setTimeout(() => resolve('203.0.113.42'), 1500));
-    }
-}
-
-// --- Progression Service ---
 export const loadProgression = (): { level: number, xp: number, stats: UserStats, badges: string[] } => {
     try {
+        if (typeof localStorage === 'undefined') return defaultProgression();
         const savedLevel = localStorage.getItem('flyvpn_level');
         const savedXp = localStorage.getItem('flyvpn_xp');
         const savedStats = localStorage.getItem('flyvpn_userStats');
@@ -37,25 +23,36 @@ export const loadProgression = (): { level: number, xp: number, stats: UserStats
         return {
             level: savedLevel ? JSON.parse(savedLevel) : 1,
             xp: savedXp ? JSON.parse(savedXp) : 0,
-            stats: savedStats ? JSON.parse(savedStats) : { totalNeutralized: 0, malware: 0, phishing: 0, ddos: 0, spyware: 0, adware: 0, level: 1, neutralizationHistory: [] },
+            stats: savedStats ? { ...defaultStats(), ...JSON.parse(savedStats) } : defaultStats(),
             badges: savedBadges ? JSON.parse(savedBadges) : [],
         };
     } catch (e) {
         console.error("Failed to load progression data", e);
-        return { level: 1, xp: 0, stats: { totalNeutralized: 0, malware: 0, phishing: 0, ddos: 0, spyware: 0, adware: 0, level: 1, neutralizationHistory: [] }, badges: [] };
+        return defaultProgression();
     }
 };
+
+const defaultStats = (): UserStats => ({
+    totalNeutralized: 0, malware: 0, phishing: 0, ddos: 0, spyware: 0, adware: 0,
+    ransomware: 0, botnet: 0, cryptojacking: 0, commandControl: 0,
+    rfThreats: 0, xBandJams: 0, gsmIntercept: 0, wifiProbes: 0,
+    domainBlocks: 0, auditsGenerated: 0, endpointsUsed: 0,
+    rulesEnabled: 0, tunnelsEstablished: 0, daysActive: 0,
+    level: 1, neutralizationHistory: [],
+});
+
+const defaultProgression = () => ({ level: 1, xp: 0, stats: defaultStats(), badges: [] });
 
 let pendingProgressionData: { level?: number, xp?: number, stats?: UserStats, badges?: string[] } = {};
 let saveProgressionTimeout: ReturnType<typeof setTimeout> | null = null;
 
 const performSave = () => {
     try {
+        if (typeof localStorage === 'undefined') return;
         if (pendingProgressionData.level) localStorage.setItem('flyvpn_level', JSON.stringify(pendingProgressionData.level));
         if (pendingProgressionData.xp) localStorage.setItem('flyvpn_xp', JSON.stringify(pendingProgressionData.xp));
         if (pendingProgressionData.stats) localStorage.setItem('flyvpn_userStats', JSON.stringify(pendingProgressionData.stats));
         if (pendingProgressionData.badges) localStorage.setItem('flyvpn_unlockedBadges', JSON.stringify(pendingProgressionData.badges));
-
         pendingProgressionData = {};
         saveProgressionTimeout = null;
     } catch (e) {
@@ -65,39 +62,33 @@ const performSave = () => {
 
 export const saveProgression = (data: { level?: number, xp?: number, stats?: UserStats, badges?: string[] }) => {
     pendingProgressionData = { ...pendingProgressionData, ...data };
-
-    if (saveProgressionTimeout) {
-        clearTimeout(saveProgressionTimeout);
-    }
-
+    if (saveProgressionTimeout) clearTimeout(saveProgressionTimeout);
     saveProgressionTimeout = setTimeout(performSave, 1000);
 };
 
-// Ensure data is saved before unload or when hidden
 if (typeof window !== 'undefined') {
     window.addEventListener('beforeunload', () => {
-        if (saveProgressionTimeout) {
-            clearTimeout(saveProgressionTimeout);
-            performSave();
-        }
+        if (saveProgressionTimeout) { clearTimeout(saveProgressionTimeout); performSave(); }
     });
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'hidden' && saveProgressionTimeout) {
-            clearTimeout(saveProgressionTimeout);
-            performSave();
+            clearTimeout(saveProgressionTimeout); performSave();
         }
     });
 }
 
+// ---------------------------------------------------------------------------
+// Logs
+// ---------------------------------------------------------------------------
 
-// --- Log Service ---
 export const loadLogs = (): LogEntry[] => {
     try {
+        if (typeof localStorage === 'undefined') return [];
         const savedLogs = localStorage.getItem('flyvpn_connection_logs');
         return savedLogs ? JSON.parse(savedLogs) : [];
-    } catch(e) {
+    } catch (e) {
         console.error("Failed to load logs from localStorage", e);
-        localStorage.removeItem('flyvpn_connection_logs');
+        if (typeof localStorage !== 'undefined') localStorage.removeItem('flyvpn_connection_logs');
         return [];
     }
 };
@@ -106,7 +97,7 @@ let saveLogsTimeout: ReturnType<typeof setTimeout> | null = null;
 let pendingLogs: LogEntry[] | null = null;
 
 const persistLogs = () => {
-    if (!pendingLogs) return;
+    if (!pendingLogs || typeof localStorage === 'undefined') return;
     try {
         localStorage.setItem('flyvpn_connection_logs', JSON.stringify(pendingLogs));
         pendingLogs = null;
@@ -118,28 +109,28 @@ const persistLogs = () => {
 
 export const saveLogs = (logs: LogEntry[]) => {
     pendingLogs = logs;
-    if (saveLogsTimeout) {
-        clearTimeout(saveLogsTimeout);
-    }
+    if (saveLogsTimeout) clearTimeout(saveLogsTimeout);
     saveLogsTimeout = setTimeout(persistLogs, 2000);
 };
 
 export const flushLogs = () => {
-    if (saveLogsTimeout) {
-        clearTimeout(saveLogsTimeout);
-        persistLogs();
-    }
+    if (saveLogsTimeout) { clearTimeout(saveLogsTimeout); persistLogs(); }
 };
 
 export const clearLogs = () => {
-    if (saveLogsTimeout) {
-        clearTimeout(saveLogsTimeout);
-        saveLogsTimeout = null;
-    }
+    if (saveLogsTimeout) { clearTimeout(saveLogsTimeout); saveLogsTimeout = null; }
     pendingLogs = null;
-    try {
-        localStorage.removeItem('flyvpn_connection_logs');
-    } catch (e) {
+    try { if (typeof localStorage !== 'undefined') localStorage.removeItem('flyvpn_connection_logs'); } catch (e) {
         console.error("Failed to clear logs from localStorage", e);
     }
-}
+};
+
+// ---------------------------------------------------------------------------
+// Backwards-compat shim
+// ---------------------------------------------------------------------------
+// Some code paths still import { disconnect } from "geminiService". Keep a
+// thin re-export so the rename doesn't break anything.
+export const disconnect = (): Promise<void> => {
+    if (typeof window !== 'undefined') return new Promise(r => setTimeout(r, 100));
+    return Promise.resolve();
+};

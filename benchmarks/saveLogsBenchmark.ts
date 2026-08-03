@@ -34,7 +34,7 @@ async function runBenchmark() {
     console.log("Starting SaveLogs Benchmark (Optimized)...");
 
     // Dynamic import to ensure mocks are set up first
-    const { saveLogs, flushLogs } = await import('../services/geminiService');
+    const { saveLogs, flushLogs } = await import('../services/persistenceService');
 
     // Increased to 1000 items to simulate a large log history
     const logs: LogEntry[] = Array.from({ length: 1000 }, (_, i) => ({
